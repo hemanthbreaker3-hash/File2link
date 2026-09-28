@@ -2,7 +2,7 @@ from telethon import events, Button
 from app.streamer.manager import session_manager
 from app.database.connection import files_col, users_col, settings
 from app.models.schemas import FileMetadata, User
-from app.utils.helpers import generate_short_code
+from app.utils.helpers import generate_short_code, format_bytes
 from app.utils.fsub import is_user_fsubbed
 from app.utils.rate_limit import check_rate_limit
 import datetime
@@ -15,23 +15,33 @@ def get_ist_greeting():
     now = datetime.datetime.now(ist_tz)
     hour = now.hour
     if 5 <= hour < 12:
-        return "Good Morning"
+        return "Good Morning 🌅"
     elif 12 <= hour < 17:
-        return "Good Afternoon"
+        return "Good Afternoon ☀️"
     else:
-        return "Good Evening"
+        return "Good Evening 🌙"
 
 def register_handlers(bot):
+
     @bot.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
+        # Only respond to human users, ignore other bots
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         user_id = event.sender_id
+
         # Save user to DB
         user_data = await users_col.find_one({"user_id": user_id})
         if user_data and user_data.get('is_banned'):
-            return await event.reply("You are banned from using this bot.")
+            return await event.reply(
+                "🚫 **Access Suspended**\n\n"
+                "> Your account has been banned from using this service.\n"
+                "> Contact support if you believe this is a mistake."
+            )
             
         if not user_data:
-            sender = await event.get_sender()
             new_user = User(
                 user_id=user_id,
                 username=getattr(sender, 'username', None),
@@ -48,24 +58,39 @@ def register_handlers(bot):
                     name = f"{first_name} {last_name}".strip()
                     await bot.send_message(
                         settings.CHANNEL_ID,
-                        f"#NewUser\n\n"
-                        f"ID - `{user_id}`\n"
-                        f"Name - {name}\n"
-                        f"Username - @{getattr(sender, 'username', None) or 'N/A'}"
+                        f"👤 **#NewUser Alert**\n\n"
+                        f"> 🆔 **ID:** `{user_id}`\n"
+                        f"> 📛 **Name:** {name}\n"
+                        f"> 🌐 **Username:** @{getattr(sender, 'username', None) or 'N/A'}"
                     )
                 except Exception as e:
                     logger.error(f"Error sending new user log: {e}")
         
         # Force Sub Check
         if not await is_user_fsubbed(bot, user_id):
-            return await event.respond("Access Denied! Please join our channels to use this bot.")
+            return await event.respond(
+                "🔒 **Access Restricted**\n\n"
+                "> You must join our official updates channel to use this bot.\n"
+                "> Please join using the link below and try again."
+            )
 
-        sender = await event.get_sender()
         first_name = getattr(sender, 'first_name', None) or "User"
         mention = f"[{first_name}](tg://user?id={user_id})"
         greeting = get_ist_greeting()
 
-        await event.respond(f"Welcome {mention}\n\n{greeting}")
+        start_text = (
+            f"👑 **{greeting}, {mention}!**\n\n"
+            f"> ⚡ **Welcome to Premium Direct Link & Streaming Service**\n"
+            f">\n"
+            f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*"
+        )
+
+        buttons = []
+        if settings.FORCE_SUB_CHANNELS:
+            ch_id = settings.FORCE_SUB_CHANNELS.split(',')[0].strip().replace("-100", "")
+            buttons.append([Button.url("📢 Join Updates Channel", f"https://t.me/{ch_id}")])
+
+        await event.respond(start_text, buttons=buttons if buttons else None)
 
     @bot.on(events.NewMessage(func=lambda e: e.media))
     async def media_handler(event):
@@ -73,24 +98,38 @@ def register_handlers(bot):
         if event.is_channel and not event.is_group:
             return
 
+        # Ignore non-users / bots
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         # Ban Check
         user_data = await users_col.find_one({"user_id": event.sender_id})
         if user_data and user_data.get('is_banned'):
-            return await event.reply("You are banned from using this bot.")
+            return await event.reply(
+                "🚫 **Access Suspended**\n\n"
+                "> Your account has been banned from using this service."
+            )
 
         # Rate Limit Check
         if not await check_rate_limit(event.sender_id):
-            return await event.reply("Please wait a moment before sending more files.")
+            return await event.reply(
+                "⏳ **Rate Limit Exceeded**\n\n"
+                "> Please wait a few seconds before uploading more files."
+            )
 
         # Force Sub Check
         if not await is_user_fsubbed(bot, event.sender_id):
-            return await event.reply("Access Denied! Please join our channels to use this bot.")
+            return await event.reply(
+                "🔒 **Access Restricted**\n\n"
+                "> Please join our official channels to unlock file conversion."
+            )
 
         media = event.media
         if not media:
             return
 
-        detecting_msg = await event.reply("Detecting, please wait...")
+        detecting_msg = await event.reply("⚡ **Analyzing media & preparing instant links...**")
 
         # Extract file info
         file_id = ""
@@ -112,7 +151,7 @@ def register_handlers(bot):
             file_id = f"{photo.id}_{photo.access_hash}"
         
         if not file_id:
-            return await detecting_msg.edit("Could not process this file.")
+            return await detecting_msg.edit("❌ **Error:** Could not extract media details from this file.")
 
         short_code = generate_short_code()
         
@@ -138,33 +177,30 @@ def register_handlers(bot):
         download_url = f"{base_url}/dl/{short_code}"
         stream_url = f"{base_url}/watch/{short_code}"
         
-        original_caption = (event.message.message or "").strip()
-        if original_caption:
-            caption = (
-                f"{original_caption}\n\n"
-                f"Download: {download_url}\n"
-                f"Stream: {stream_url}"
-            )
-        else:
-            caption = (
-                f"File: `{file_name}`\n"
-                f"Size: `{file_size / (1024*1024):.2f} MB`\n\n"
-                f"Download: {download_url}\n"
-                f"Stream: {stream_url}"
-            )
+        formatted_size = format_bytes(file_size) if file_size else "N/A"
 
-        # Delete detection status message
+        caption = (
+            f"💎 **Media Link Generated**\n\n"
+            f"> 📂 **File Name:** `{file_name}`\n"
+            f"> 📦 **File Size:** `{formatted_size}`\n"
+            f"> ⚙️ **MIME Type:** `{mime_type}`\n\n"
+            f"🚀 **Fast Links:**\n"
+            f"> ⚡ [Direct Download]({download_url})\n"
+            f"> 🍿 [Stream Online]({stream_url})"
+        )
+
+        # Delete status message
         try:
             await detecting_msg.delete()
         except Exception as e:
             logger.error(f"Error deleting detecting message: {e}")
 
         user_buttons = [
-            [Button.url("Download", download_url), Button.url("Watch Online", stream_url)],
-            [Button.inline("Delete Link", f"del_{short_code}".encode())]
+            [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
+            [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())]
         ]
 
-        # Re-send file with edited caption to user
+        # Send file with formatted caption to user
         try:
             await bot.send_file(
                 event.chat_id,
@@ -186,10 +222,10 @@ def register_handlers(bot):
                 logger.error(f"Error sending file: {e2}")
                 await event.reply(caption)
 
-        # Re-send file with edited caption to channel
+        # Re-send file with caption to channel
         if settings.CHANNEL_ID and settings.CHANNEL_ID != event.chat_id:
             channel_buttons = [
-                [Button.url("Download", download_url), Button.url("Watch Online", stream_url)]
+                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)]
             ]
             try:
                 await bot.send_file(
@@ -203,22 +239,34 @@ def register_handlers(bot):
 
     @bot.on(events.CallbackQuery())
     async def global_callback_check(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if not await is_user_fsubbed(bot, event.sender_id):
-            return await event.answer("Please join the channel first!", alert=True)
+            return await event.answer("🔒 Please join the update channel first!", alert=True)
 
     @bot.on(events.CallbackQuery(pattern=b'del_'))
     async def delete_callback(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         short_code = event.data.decode().split("_")[1]
         file_data = await files_col.find_one({"short_code": short_code})
         if file_data and file_data['uploader_id'] == event.sender_id:
             await files_col.delete_one({"short_code": short_code})
-            await event.edit("Link deleted successfully!")
+            await event.edit("🗑️ **Link deleted successfully!**")
         else:
-            await event.answer("You are not authorized to delete this link.", alert=True)
+            await event.answer("🚫 You are not authorized to delete this link.", alert=True)
 
     # Admin Commands
     @bot.on(events.NewMessage(pattern='/stats'))
     async def stats_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
@@ -226,23 +274,31 @@ def register_handlers(bot):
         total_users = await users_col.count_documents({})
         
         await event.reply(
-            f"Statistics:\n\n"
-            f"Total Users: `{total_users}`\n"
-            f"Total Files: `{total_files}`"
+            f"📊 **System Statistics**\n\n"
+            f"> 👥 **Total Users:** `{total_users}`\n"
+            f"> 📁 **Total Files Generated:** `{total_files}`\n"
+            f"> ⚡ **System Status:** `Online & High-Speed`"
         )
 
     @bot.on(events.NewMessage(pattern='/broadcast'))
     async def broadcast_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         if not event.reply_to_msg_id:
-            return await event.reply("Please reply to a message to broadcast it.")
+            return await event.reply("⚠️ **Usage:** Please reply to a message to broadcast it.")
             
         msg = await event.get_reply_message()
         users = await users_col.find().to_list(None)
         
-        status = await event.reply(f"Broadcast Started...\nTarget: `{len(users)}` users")
+        status = await event.reply(
+            f"📢 **Broadcast Initiated...**\n\n"
+            f"> 🎯 **Target:** `{len(users)}` users"
+        )
         
         done = 0
         failed = 0
@@ -254,49 +310,82 @@ def register_handlers(bot):
                 failed += 1
             
             if done % 20 == 0:
-                await status.edit(f"Broadcast in Progress...\nDone: `{done}`\nFailed: `{failed}`")
+                await status.edit(
+                    f"🔄 **Broadcast In Progress...**\n\n"
+                    f"> ✅ **Sent:** `{done}`\n"
+                    f"> ❌ **Failed:** `{failed}`"
+                )
                 
-        await status.edit(f"Broadcast Completed!\n\nTotal: `{len(users)}` users\nSuccess: `{done}`\nFailed: `{failed}`")
+        await status.edit(
+            f"🎉 **Broadcast Completed!**\n\n"
+            f"> 👥 **Total Target:** `{len(users)}` users\n"
+            f"> ✅ **Success:** `{done}`\n"
+            f"> ❌ **Failed:** `{failed}`"
+        )
 
     @bot.on(events.NewMessage(pattern='/ban'))
     async def ban_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         try:
             user_id = int(event.text.split()[1])
             await users_col.update_one({"user_id": user_id}, {"$set": {"is_banned": True}})
-            await event.reply(f"User `{user_id}` has been banned.")
+            await event.reply(
+                f"🛡️ **User Banned**\n\n"
+                f"> User ID `{user_id}` has been banned from using the bot."
+            )
         except Exception:
-            await event.reply("Usage: `/ban USER_ID`")
+            await event.reply("⚠️ **Usage:** `/ban USER_ID`")
 
     @bot.on(events.NewMessage(pattern='/unban'))
     async def unban_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         try:
             user_id = int(event.text.split()[1])
             await users_col.update_one({"user_id": user_id}, {"$set": {"is_banned": False}})
-            await event.reply(f"User `{user_id}` has been unbanned.")
+            await event.reply(
+                f"🛡️ **User Unbanned**\n\n"
+                f"> User ID `{user_id}` has been restored and unbanned."
+            )
         except Exception:
-            await event.reply("Usage: `/unban USER_ID`")
+            await event.reply("⚠️ **Usage:** `/unban USER_ID`")
 
     @bot.on(events.NewMessage(pattern='/autodel'))
     async def autodel_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
             
         try:
             args = event.text.split()
             if len(args) < 2:
-                return await event.reply("Usage: `/autodel 24h` or `/autodel off`")
+                return await event.reply("⚠️ **Usage:** `/autodel 24h` or `/autodel off`")
             
             val = args[1].lower()
             if val == "off":
-                await event.reply("Auto-delete disabled.")
+                await event.reply(
+                    f"⏳ **Auto-Delete Configured**\n\n"
+                    f"> Auto-delete feature has been disabled."
+                )
             else:
                 hours = int(val.replace("h", ""))
-                await event.reply(f"Auto-delete set to `{hours}` hours.")
+                await event.reply(
+                    f"⏳ **Auto-Delete Configured**\n\n"
+                    f"> Link expiration set to `{hours}` hours."
+                )
         except Exception:
-            await event.reply("Usage: `/autodel 24h` or `/autodel off`")
+            await event.reply("⚠️ **Usage:** `/autodel 24h` or `/autodel off`")

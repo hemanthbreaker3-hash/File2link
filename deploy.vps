@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Telegram Direct Media Streamer & Link Generator - One-Click VPS Deployer
+# ==============================================================================
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+echo -e "${CYAN}"
+echo "====================================================================="
+echo "   🚀 TELEGRAM DIRECT MEDIA STREAMER & LINK GENERATOR - DEPLOYER    "
+echo "====================================================================="
+echo -e "${NC}"
+
+# Function for status messages
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# 1. Check Root or Sudo
+if [ "$EUID" -ne 0 ]; then
+    warning "Running without root privileges. If docker commands fail, please re-run with sudo."
+fi
+
+# 2. Verify System Dependencies (curl, git)
+info "Checking system prerequisites..."
+if ! command -v curl &> /dev/null; then
+    info "Installing curl..."
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y curl
+    elif command -v yum &> /dev/null; then
+        sudo yum install -y curl
+    fi
+fi
+
+# 3. Check / Install Docker & Docker Compose
+if ! command -v docker &> /dev/null; then
+    info "Docker is not installed. Installing Docker..."
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    rm -f get-docker.sh
+    success "Docker installed successfully."
+fi
+
+# Check Docker Compose (plugin or standalone)
+DOCKER_COMPOSE_CMD=""
+if docker compose version &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+elif command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+else
+    info "Docker Compose plugin not found. Installing..."
+    if command -v apt-get &> /dev/null; then
+        sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+    fi
+    if docker compose version &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker compose"
+    elif command -v docker-compose &> /dev/null; then
+        DOCKER_COMPOSE_CMD="docker-compose"
+    else
+        error "Docker Compose installation failed. Please install docker-compose manually."
+    fi
+fi
+
+info "Using Docker Compose command: ${DOCKER_COMPOSE_CMD}"
+
+# 4. Check Environment Configuration (.env)
+if [ ! -f .env ]; then
+    if [ -f .env.example ]; then
+        warning ".env file not found. Copying from .env.example..."
+        cp .env.example .env
+        success "Created .env from .env.example."
+    else
+        error ".env file missing and .env.example is not present!"
+    fi
+fi
+
+# Ensure Docker container connection strings for internal MongoDB & Redis if using Compose
+if ! grep -q "MONGODB_URI" .env || grep -q "MONGODB_URI=mongodb://localhost" .env; then
+    sed -i.bak 's|MONGODB_URI=.*|MONGODB_URI=mongodb://mongodb:27017/tg_media_bot|g' .env 2>/dev/null || true
+fi
+if ! grep -q "REDIS_URL" .env || grep -q "REDIS_URL=redis://localhost" .env; then
+    sed -i.bak 's|REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|g' .env 2>/dev/null || true
+fi
+
+# Validate Required Environment Variables
+MISSING_VARS=0
+for var in API_ID API_HASH BOT_TOKEN OWNER_ID; do
+    VAL=$(grep -E "^${var}=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'" | tr -d ' ')
+    if [ -z "$VAL" ] || [ "$VAL" == "your_api_id" ] || [ "$VAL" == "your_api_hash" ] || [ "$VAL" == "your_bot_token" ]; then
+        warning "Variable ${var} in .env is missing or using placeholder value!"
+        MISSING_VARS=1
+    fi
+done
+
+if [ "$MISSING_VARS" -eq 1 ]; then
+    warning "Please update your .env file with your Telegram credentials before proceeding."
+    echo -e "${YELLOW}Required variables in .env:${NC}"
+    echo "  - API_ID"
+    echo "  - API_HASH"
+    echo "  - BOT_TOKEN"
+    echo "  - OWNER_ID"
+    echo "  - BASE_URL"
+    read -p "Do you want to continue deployment anyway? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        error "Deployment stopped to allow editing .env."
+    fi
+fi
+
+# 5. Build and Launch Containers
+info "Building Docker images and starting services..."
+$DOCKER_COMPOSE_CMD down --remove-orphans 2>/dev/null || true
+$DOCKER_COMPOSE_CMD up -d --build
+
+# 6. Verify Deployment
+info "Waiting for service health checks..."
+sleep 5
+
+if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
+    success "Deployment completed successfully! All containers are up and running."
+    echo -e "${CYAN}"
+    echo "====================================================================="
+    echo "🎉 SERVICE STATUS SUMMARY"
+    echo "====================================================================="
+    echo -e "${NC}"
+    $DOCKER_COMPOSE_CMD ps
+    echo
+    info "To view live application logs, run:"
+    echo -e "${GREEN}  $DOCKER_COMPOSE_CMD logs -f web${NC}"
+    echo
+    info "To stop services, run:"
+    echo -e "${GREEN}  $DOCKER_COMPOSE_CMD down${NC}"
+    echo
+    info "To restart services, run:"
+    echo -e "${GREEN}  $DOCKER_COMPOSE_CMD restart${NC}"
+else
+    error "Containers failed to start cleanly. Check logs with '$DOCKER_COMPOSE_CMD logs'."
+fi
