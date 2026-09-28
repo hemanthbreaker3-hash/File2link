@@ -4,7 +4,9 @@
 # Telegram Direct Media Streamer & Link Generator - One-Click VPS Deployer
 # ==============================================================================
 
-set -e
+set -eo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,15 +21,28 @@ echo "   🚀 TELEGRAM DIRECT MEDIA STREAMER & LINK GENERATOR - DEPLOYER    "
 echo "====================================================================="
 echo -e "${NC}"
 
-# Function for status messages
+# Helper function for running commands with sudo if not root
+run_cmd() {
+    if [ "$(id -u)" -ne 0 ]; then
+        if command -v sudo &> /dev/null; then
+            sudo "$@"
+        else
+            echo -e "${RED}[ERROR] Sudo is required to run: $@${NC}"
+            exit 1
+        fi
+    else
+        "$@"
+    fi
+}
+
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # 1. Check Root or Sudo
-if [ "$EUID" -ne 0 ]; then
-    warning "Running without root privileges. If docker commands fail, please re-run with sudo."
+if [ "$(id -u)" -ne 0 ]; then
+    warning "Running without root privileges. Commands requiring elevated rights will use sudo."
 fi
 
 # 2. Verify System Dependencies (curl, git)
@@ -35,9 +50,13 @@ info "Checking system prerequisites..."
 if ! command -v curl &> /dev/null; then
     info "Installing curl..."
     if command -v apt-get &> /dev/null; then
-        sudo apt-get update && sudo apt-get install -y curl
+        run_cmd apt-get update -qq && run_cmd apt-get install -y -qq curl
+    elif command -v dnf &> /dev/null; then
+        run_cmd dnf install -y curl
     elif command -v yum &> /dev/null; then
-        sudo yum install -y curl
+        run_cmd yum install -y curl
+    elif command -v apk &> /dev/null; then
+        run_cmd apk add --no-cache curl
     fi
 fi
 
@@ -45,12 +64,17 @@ fi
 if ! command -v docker &> /dev/null; then
     info "Docker is not installed. Installing Docker..."
     curl -fsSL https://get.docker.com -o get-docker.sh
-    sudo sh get-docker.sh
+    run_cmd sh get-docker.sh
     rm -f get-docker.sh
     success "Docker installed successfully."
 fi
 
-# Check Docker Compose (plugin or standalone)
+# Ensure docker daemon is active
+if command -v systemctl &> /dev/null; then
+    run_cmd systemctl start docker 2>/dev/null || true
+fi
+
+# Determine Docker Compose command
 DOCKER_COMPOSE_CMD=""
 if docker compose version &> /dev/null; then
     DOCKER_COMPOSE_CMD="docker compose"
@@ -59,8 +83,13 @@ elif command -v docker-compose &> /dev/null; then
 else
     info "Docker Compose plugin not found. Installing..."
     if command -v apt-get &> /dev/null; then
-        sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+        run_cmd apt-get update -qq && run_cmd apt-get install -y -qq docker-compose-plugin 2>/dev/null || true
+    elif command -v dnf &> /dev/null; then
+        run_cmd dnf install -y docker-compose-plugin 2>/dev/null || true
+    elif command -v yum &> /dev/null; then
+        run_cmd yum install -y docker-compose-plugin 2>/dev/null || true
     fi
+
     if docker compose version &> /dev/null; then
         DOCKER_COMPOSE_CMD="docker compose"
     elif command -v docker-compose &> /dev/null; then
@@ -83,36 +112,53 @@ if [ ! -f .env ]; then
     fi
 fi
 
-# Ensure Docker container connection strings for internal MongoDB & Redis if using Compose
-if ! grep -q "MONGODB_URI" .env || grep -q "MONGODB_URI=mongodb://localhost" .env; then
-    sed -i.bak 's|MONGODB_URI=.*|MONGODB_URI=mongodb://mongodb:27017/tg_media_bot|g' .env 2>/dev/null || true
+# Ensure internal MongoDB & Redis connection URIs for Docker service networking
+if ! grep -q "^MONGODB_URI=" .env || grep -qE "^MONGODB_URI=.*localhost" .env || grep -qE "^MONGODB_URI=.*127\.0\.0\.1" .env; then
+    if grep -q "^MONGODB_URI=" .env; then
+        sed -i.bak 's|^MONGODB_URI=.*|MONGODB_URI=mongodb://mongodb:27017/tg_media_bot|g' .env 2>/dev/null || true
+    else
+        echo "MONGODB_URI=mongodb://mongodb:27017/tg_media_bot" >> .env
+    fi
 fi
-if ! grep -q "REDIS_URL" .env || grep -q "REDIS_URL=redis://localhost" .env; then
-    sed -i.bak 's|REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|g' .env 2>/dev/null || true
+
+if ! grep -q "^REDIS_URL=" .env || grep -qE "^REDIS_URL=.*localhost" .env || grep -qE "^REDIS_URL=.*127\.0\.0\.1" .env; then
+    if grep -q "^REDIS_URL=" .env; then
+        sed -i.bak 's|^REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|g' .env 2>/dev/null || true
+    else
+        echo "REDIS_URL=redis://redis:6379/0" >> .env
+    fi
 fi
+
+# Clean up backup file if generated
+rm -f .env.bak 2>/dev/null || true
 
 # Validate Required Environment Variables
 MISSING_VARS=0
 for var in API_ID API_HASH BOT_TOKEN OWNER_ID; do
-    VAL=$(grep -E "^${var}=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'" | tr -d ' ')
-    if [ -z "$VAL" ] || [ "$VAL" == "your_api_id" ] || [ "$VAL" == "your_api_hash" ] || [ "$VAL" == "your_bot_token" ]; then
-        warning "Variable ${var} in .env is missing or using placeholder value!"
+    VAL=$(grep -E "^${var}=" .env | cut -d'=' -f2- | tr -d '"' | tr -d "'" | tr -d ' ' || true)
+    if [ -z "$VAL" ] || [ "$VAL" == "123456" ] || [ "$VAL" == "your_api_id" ] || [ "$VAL" == "abcdef1234567890" ] || [ "$VAL" == "your_api_hash" ] || [ "$VAL" == "123456789:ABCDEF-GHIJKLMN-OPQRSTUVWXYZ" ] || [ "$VAL" == "your_bot_token" ]; then
+        warning "Variable ${var} in .env is missing or using default/placeholder value!"
         MISSING_VARS=1
     fi
 done
 
 if [ "$MISSING_VARS" -eq 1 ]; then
-    warning "Please update your .env file with your Telegram credentials before proceeding."
+    warning "Please update your .env file with your Telegram credentials before production use."
     echo -e "${YELLOW}Required variables in .env:${NC}"
     echo "  - API_ID"
     echo "  - API_HASH"
     echo "  - BOT_TOKEN"
     echo "  - OWNER_ID"
     echo "  - BASE_URL"
-    read -p "Do you want to continue deployment anyway? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        error "Deployment stopped to allow editing .env."
+
+    if [ -t 0 ] && [ "${ALLOW_MISSING_ENV:-0}" -ne 1 ]; then
+        read -p "Do you want to continue deployment anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            error "Deployment stopped to allow editing .env."
+        fi
+    else
+        warning "Non-interactive environment detected. Proceeding with current .env configuration..."
     fi
 fi
 
@@ -123,9 +169,23 @@ $DOCKER_COMPOSE_CMD up -d --build
 
 # 6. Verify Deployment
 info "Waiting for service health checks..."
-sleep 5
+MAX_ATTEMPTS=12
+ATTEMPT=0
+SERVICES_READY=0
 
-if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    sleep 3
+    ATTEMPT=$((ATTEMPT + 1))
+
+    # Check if web container is running
+    if $DOCKER_COMPOSE_CMD ps --services --filter "status=running" 2>/dev/null | grep -q "web"; then
+        SERVICES_READY=1
+        break
+    fi
+    info "Waiting for containers to initialize ($ATTEMPT/$MAX_ATTEMPTS)..."
+done
+
+if [ "$SERVICES_READY" -eq 1 ]; then
     success "Deployment completed successfully! All containers are up and running."
     echo -e "${CYAN}"
     echo "====================================================================="
@@ -143,5 +203,9 @@ if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
     info "To restart services, run:"
     echo -e "${GREEN}  $DOCKER_COMPOSE_CMD restart${NC}"
 else
-    error "Containers failed to start cleanly. Check logs with '$DOCKER_COMPOSE_CMD logs'."
+    warning "Containers status check:"
+    $DOCKER_COMPOSE_CMD ps || true
+    warning "Recent container logs:"
+    $DOCKER_COMPOSE_CMD logs --tail 30 || true
+    error "Containers failed to start cleanly. Please check the logs above."
 fi
