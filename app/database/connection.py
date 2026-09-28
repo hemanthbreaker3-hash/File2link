@@ -52,3 +52,11 @@ async def create_indexes():
     await files_col.create_index("file_id")
     await users_col.create_index("user_id", unique=True)
     await files_col.create_index("expiry_time")
+
+async def load_custom_settings():
+    try:
+        custom_base = await settings_col.find_one({"key": "base_url"})
+        if custom_base and custom_base.get('value'):
+            settings.BASE_URL = custom_base['value']
+    except Exception as e:
+        pass

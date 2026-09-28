@@ -1,6 +1,6 @@
 from telethon import events, Button
 from app.streamer.manager import session_manager
-from app.database.connection import files_col, users_col, settings
+from app.database.connection import files_col, users_col, settings_col, settings
 from app.models.schemas import FileMetadata, User
 from app.utils.helpers import generate_short_code, format_bytes
 from app.utils.fsub import is_user_fsubbed
@@ -261,6 +261,49 @@ def register_handlers(bot):
             await event.answer("🚫 You are not authorized to delete this link.", alert=True)
 
     # Admin Commands
+    @bot.on(events.NewMessage(pattern='/baseurl'))
+    async def baseurl_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
+        # Restrict to admins / owner only
+        if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
+            return await event.reply(
+                "🚫 **Unauthorized Access**\n\n"
+                "> Only authorized bot administrators can update the Base URL."
+            )
+
+        args = event.text.split(maxsplit=1)
+        if len(args) < 2:
+            return await event.reply(
+                "🌐 **Base URL Management**\n\n"
+                f"> 🔗 **Current Base URL:** `{settings.BASE_URL}`\n\n"
+                "⚠️ **Usage:** `/baseurl https://your-domain.com`"
+            )
+
+        new_url = args[1].strip().rstrip('/')
+        if not new_url.startswith(('http://', 'https://')):
+            new_url = f"https://{new_url}"
+
+        try:
+            await settings_col.update_one(
+                {"key": "base_url"},
+                {"$set": {"value": new_url, "updated_by": event.sender_id, "updated_at": datetime.datetime.utcnow()}},
+                upsert=True
+            )
+            settings.BASE_URL = new_url
+
+            await event.reply(
+                "🌐 **Base URL Updated Successfully!**\n\n"
+                f"> 🔗 **New Base URL:** `{new_url}`\n"
+                f"> 👤 **Updated By:** `{event.sender_id}`\n\n"
+                "✨ *All newly generated stream & download links will now use this updated Base URL.*"
+            )
+        except Exception as e:
+            logger.error(f"Error updating baseurl: {e}")
+            await event.reply(f"❌ **Error updating Base URL:** `{e}`")
+
     @bot.on(events.NewMessage(pattern='/stats'))
     async def stats_handler(event):
         sender = await event.get_sender()

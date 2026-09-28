@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
-from app.database.connection import settings, files_col, create_indexes
+from app.database.connection import settings, files_col, create_indexes, load_custom_settings
 from app.streamer.manager import session_manager
 from app.streamer.engine import get_streaming_response, get_remux_response
 from app.streamer.probe import probe_tracks
@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
     await create_indexes()
+    await load_custom_settings()
     await session_manager.start()
     register_handlers(session_manager.bot_client)
     logger.info("Application started")
