@@ -1,0 +1,7 @@
+{
+  "name": "tg-media-streamer-netlify-proxy",
+  "version": "1.0.0",
+  "description": "Netlify Base URL deployment and proxy handler for Telegram Direct Media Streamer",
+  "main": "functions/proxy.js",
+  "dependencies": {}
+}

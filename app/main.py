@@ -9,6 +9,7 @@ from app.streamer.probe import probe_tracks
 from app.bot.main import register_handlers
 from app.admin.routes import router as admin_router
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio
 import logging
@@ -41,6 +42,15 @@ app = FastAPI(title="Telegram Direct Media Link Generator", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Enable Compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
