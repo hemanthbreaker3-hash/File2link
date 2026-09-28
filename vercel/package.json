@@ -1,0 +1,10 @@
+{
+  "name": "tg-media-streamer-vercel-proxy",
+  "version": "1.0.0",
+  "description": "Vercel Base URL deployment and proxy router for Telegram Direct Media Streamer",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js"
+  },
+  "dependencies": {}
+}
