@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ANIZONEFLIX{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+        
+        body {
+            margin: 0;
+            padding: 0;
+            color: white;
+            font-family: 'Outfit', sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+            background: #0f172a;
+        }
+
+        .watermark {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            opacity: 0.05;
+            font-size: 2rem;
+            font-weight: 800;
+            pointer-events: none;
+            z-index: 1000;
+            user-select: none;
+            text-transform: uppercase;
+            letter-spacing: 0.2rem;
+            transform: rotate(-15deg);
+        }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .glass-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+            transform: translateY(-5px);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-gradient {
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            transition: all 0.3s ease;
+        }
+
+        .btn-gradient:hover {
+            opacity: 0.9;
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.4);
+        }
+
+        .text-gradient {
+            background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+    <div class="watermark">ANIZONEFLIX</div>
+    <nav class="max-w-6xl mx-auto flex justify-between items-center mb-12 glass p-4 rounded-2xl">
+        <a href="/" class="flex items-center space-x-3">
+            <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-xl">
+                <i class="fas fa-bolt"></i>
+            </div>
+            <span class="text-2xl font-bold tracking-tight">ANIZONEFLIX</span>
+        </a>
+    </nav>
+
+    <main class="max-w-6xl mx-auto">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="mt-20 py-12 border-t border-white/5 text-center">
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold mb-2">ANIZONEFLIX</h2>
+            <p class="text-gray-500">High-performance media streaming.</p>
+        </div>
+        <p class="text-gray-600 text-sm">&copy; 2024 ANIZONEFLIX. All rights reserved.</p>
+    </footer>
+</body>
+</html>
