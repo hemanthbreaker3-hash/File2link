@@ -1,8 +1,29 @@
 import http from 'http';
 import https from 'https';
 
+import fs from 'fs';
+import path from 'path';
+
+function getBackendUrl() {
+  if (process.env.BACKEND_URL) {
+    return process.env.BACKEND_URL;
+  }
+  try {
+    const configPath = path.join(process.cwd(), 'netlify', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.BACKEND_URL && !config.BACKEND_URL.includes('YOUR_VPS_IP')) {
+        return config.BACKEND_URL;
+      }
+    }
+  } catch (e) {
+    // Ignore config parse error
+  }
+  return null;
+}
+
 export async function handler(event, context) {
-  const backendUrl = process.env.BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   if (!backendUrl) {
     return {
@@ -10,7 +31,7 @@ export async function handler(event, context) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         error: "BACKEND_URL environment variable is not configured.",
-        message: "Please set BACKEND_URL in Netlify environment variables (e.g. http://your-vps-ip:8000 or https://stream.yourdomain.com)."
+        message: "Please set BACKEND_URL in Netlify environment variables or netlify/config.json (e.g. http://your-vps-ip:8000 or https://stream.yourdomain.com)."
       })
     };
   }

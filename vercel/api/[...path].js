@@ -1,13 +1,34 @@
 import http from 'http';
 import https from 'https';
 
+import fs from 'fs';
+import path from 'path';
+
+function getBackendUrl() {
+  if (process.env.BACKEND_URL) {
+    return process.env.BACKEND_URL;
+  }
+  try {
+    const configPath = path.join(process.cwd(), 'vercel', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.BACKEND_URL && !config.BACKEND_URL.includes('YOUR_VPS_IP')) {
+        return config.BACKEND_URL;
+      }
+    }
+  } catch (e) {
+    // Ignore config file parse error
+  }
+  return null;
+}
+
 export default async function handler(req, res) {
-  const backendUrl = process.env.BACKEND_URL;
+  const backendUrl = getBackendUrl();
 
   if (!backendUrl) {
     res.status(500).json({
       error: "BACKEND_URL environment variable is not configured.",
-      message: "Please set BACKEND_URL in Vercel project environment variables (e.g. http://your-vps-ip:8000 or https://stream.yourdomain.com)."
+      message: "Please set BACKEND_URL in Vercel project environment variables or in vercel/config.json (e.g. http://your-vps-ip:8000 or https://stream.yourdomain.com)."
     });
     return;
   }
