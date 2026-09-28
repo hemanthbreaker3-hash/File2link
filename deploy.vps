@@ -112,6 +112,9 @@ if [ ! -f .env ]; then
     fi
 fi
 
+# Sanitize .env file to strip trailing inline comments like "  # For log storage (optional)"
+sed -i.bak -E 's/[[:space:]]*#.*$//' .env 2>/dev/null || true
+
 # Ensure internal MongoDB & Redis connection URIs for Docker service networking
 if ! grep -q "^MONGODB_URI=" .env || grep -qE "^MONGODB_URI=.*localhost" .env || grep -qE "^MONGODB_URI=.*127\.0\.0\.1" .env; then
     if grep -q "^MONGODB_URI=" .env; then

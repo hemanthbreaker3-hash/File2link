@@ -1,6 +1,7 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic_settings import BaseSettings
-from typing import Optional
+from pydantic import field_validator
+from typing import Optional, Union, Any
 import os
 
 class Settings(BaseSettings):
@@ -19,6 +20,24 @@ class Settings(BaseSettings):
     PORT: int = 8000
     DEBUG: bool = False
     SESSIONS: str = ""
+
+    @field_validator("CHANNEL_ID", mode="before")
+    @classmethod
+    def parse_optional_int(cls, v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            # Strip inline comments e.g. "-1001234567890 # For log storage"
+            cleaned = v.split("#")[0].strip()
+            if not cleaned:
+                return None
+            try:
+                return int(cleaned)
+            except ValueError:
+                return None
+        return None
 
     @property
     def mongo_uri(self) -> str:

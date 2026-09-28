@@ -40,3 +40,22 @@ def test_settings_properties():
     )
     assert test_settings.admin_list == [123, 456, 789]
     assert test_settings.fsub_list == [-1001, -1002]
+
+def test_channel_id_parsing_with_comments():
+    test_settings_comment = Settings(
+        API_ID=123456,
+        API_HASH="hash",
+        BOT_TOKEN="token",
+        OWNER_ID=123,
+        CHANNEL_ID="-1001234567890 # For log storage (optional)"
+    )
+    assert test_settings_comment.CHANNEL_ID == -1001234567890
+
+    test_settings_only_comment = Settings(
+        API_ID=123456,
+        API_HASH="hash",
+        BOT_TOKEN="token",
+        OWNER_ID=123,
+        CHANNEL_ID="# For log storage (optional)"
+    )
+    assert test_settings_only_comment.CHANNEL_ID is None
