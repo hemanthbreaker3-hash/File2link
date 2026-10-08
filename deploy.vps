@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # ==============================================================================
-# Telegram Direct Media Streamer & Link Generator - One-Click VPS Deployer
+# Anizoneflix - One-Click VPS Deployer
 # ==============================================================================
 
 set -eo pipefail
@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 
 echo -e "${CYAN}"
 echo "====================================================================="
-echo "   🚀 TELEGRAM DIRECT MEDIA STREAMER & LINK GENERATOR - DEPLOYER    "
+echo "   🚀 ANIZONEFLIX - DEPLOYER    "
 echo "====================================================================="
 echo -e "${NC}"
 
@@ -118,9 +118,9 @@ sed -i.bak -E 's/[[:space:]]*#.*$//' .env 2>/dev/null || true
 # Ensure internal MongoDB & Redis connection URIs for Docker service networking
 if ! grep -q "^MONGODB_URI=" .env || grep -qE "^MONGODB_URI=.*localhost" .env || grep -qE "^MONGODB_URI=.*127\.0\.0\.1" .env; then
     if grep -q "^MONGODB_URI=" .env; then
-        sed -i.bak 's|^MONGODB_URI=.*|MONGODB_URI=mongodb://mongodb:27017/tg_media_bot|g' .env 2>/dev/null || true
+        sed -i.bak 's|^MONGODB_URI=.*|MONGODB_URI=mongodb://mongodb:27017/anizoneflix|g' .env 2>/dev/null || true
     else
-        echo "MONGODB_URI=mongodb://mongodb:27017/tg_media_bot" >> .env
+        echo "MONGODB_URI=mongodb://mongodb:27017/anizoneflix" >> .env
     fi
 fi
 

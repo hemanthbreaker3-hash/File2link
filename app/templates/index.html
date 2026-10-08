@@ -1,41 +1,16 @@
 {% extends "base.html" %}
-
-{% block title %}ANIZONEFLIX - Direct Media Link Generator{% endblock %}
-
+{% block title %}Anizoneflix{% endblock %}
 {% block content %}
-<div class="text-center py-20">
-    <h1 class="text-5xl md:text-7xl font-bold mb-6 tracking-tight">
-        ANIZONEFLIX <br>
-        Media Streamer
-    </h1>
-    <p class="text-xl text-gray-400 max-w-2xl mx-auto mb-10">
-        Experience high-speed Telegram media streaming without limits.
-    </p>
-</div>
-
-<div id="features" class="grid md:grid-cols-3 gap-8 mt-10">
-    <div class="glass-card p-8 text-center">
-        <div class="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center text-blue-400 text-3xl mx-auto mb-6">
-            <i class="fas fa-rocket"></i>
-        </div>
-        <h3 class="text-xl font-bold mb-4">Instant Generation</h3>
-        <p class="text-gray-400">Get direct links within seconds of sending your file to the bot.</p>
-    </div>
-    
-    <div class="glass-card p-8 text-center">
-        <div class="w-16 h-16 bg-purple-500/20 rounded-2xl flex items-center justify-center text-purple-400 text-3xl mx-auto mb-6">
-            <i class="fas fa-play"></i>
-        </div>
-        <h3 class="text-xl font-bold mb-4">Direct Streaming</h3>
-        <p class="text-gray-400">Watch your videos instantly with seeking support and multiple qualities.</p>
-    </div>
-    
-    <div class="glass-card p-8 text-center">
-        <div class="w-16 h-16 bg-green-500/20 rounded-2xl flex items-center justify-center text-green-400 text-3xl mx-auto mb-6">
-            <i class="fas fa-shield-alt"></i>
-        </div>
-        <h3 class="text-xl font-bold mb-4">No Storage</h3>
-        <p class="text-gray-400">Files are piped directly from Telegram servers. We never store your data.</p>
-    </div>
-</div>
+<section class="hero">
+  <h1>Anizoneflix</h1>
+  <p>Simple, fast media links and streaming with a clean interface built for phones and low-end devices.</p>
+  <div class="row" style="justify-content:center;margin-top:20px">
+    <a class="btn btn-primary" href="https://t.me/anizoneflix" rel="noopener">@anizoneflix</a>
+  </div>
+</section>
+<section class="grid grid-3">
+  <article class="card feature"><div class="icon">⚡</div><h2>Fast links</h2><p>Generate a direct link without a heavy web interface.</p></article>
+  <article class="card feature"><div class="icon">▶</div><h2>Easy streaming</h2><p>Open supported media directly in your browser or player.</p></article>
+  <article class="card feature"><div class="icon">✓</div><h2>Lightweight</h2><p>No large frontend framework is required for the web UI.</p></article>
+</section>
 {% endblock %}

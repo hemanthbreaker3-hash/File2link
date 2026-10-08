@@ -43,8 +43,17 @@ class SessionManager:
                 self.clients.append(self.bot_client)
 
     async def stop(self):
-        for client in self.clients:
-            await client.disconnect()
+        seen = set()
+        for client in [*self.clients, self.bot_client]:
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            try:
+                await client.disconnect()
+            except Exception as exc:
+                logger.warning("Client shutdown failed: %s", exc)
+        self.clients.clear()
+        self.bot_client = None
 
     def get_client(self):
         if not self.clients:

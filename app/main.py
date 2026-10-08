@@ -14,6 +14,7 @@ import uvicorn
 import asyncio
 import logging
 import sys
+import datetime
 
 # Configure Windows Event Loop Policy for subprocess support
 if sys.platform == 'win32':
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
     await session_manager.stop()
     logger.info("Application stopped")
 
-app = FastAPI(title="Telegram Direct Media Link Generator", lifespan=lifespan)
+app = FastAPI(title="Anizoneflix", description="Anizoneflix media link and streaming service.", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
@@ -47,7 +48,7 @@ app.include_router(admin_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -59,14 +60,26 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok", "service": "anizoneflix"}
+
 @app.get("/")
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
+def _is_expired(file_data):
+    expiry = file_data.get("expiry_time")
+    if not expiry:
+        return False
+    if expiry.tzinfo is None:
+        return expiry <= datetime.datetime.utcnow()
+    return expiry <= datetime.datetime.now(datetime.timezone.utc)
+
 @app.get("/watch/{short_code}")
 async def watch_page(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
+    if not file_data or _is_expired(file_data):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
     return templates.TemplateResponse("watch.html", {
@@ -79,8 +92,10 @@ async def watch_page(request: Request, short_code: str):
 @app.get("/stream/{short_code}")
 async def stream_file(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
-        raise HTTPException(status_code=404, detail="File not found")
+    if not file_data or _is_expired(file_data):
+        raise HTTPException(status_code=404, detail="File not found or expired")
+
+    await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
 
     # Use all available clients for ultra-high-speed downloads
     clients = session_manager.get_all_clients()
@@ -124,7 +139,7 @@ async def get_tracks(short_code: str):
     
     # Check if tracks are already cached in the database (and not an error result)
     cached = file_data.get('tracks_info')
-    if False and cached and not cached.get('error'):
+    if cached and not cached.get('error'):
         return JSONResponse(cached)
     
     # Need to probe the file

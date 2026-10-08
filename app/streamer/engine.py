@@ -164,18 +164,35 @@ async def media_streamer(clients: list[TelegramClient], file, start: int, end: i
 
 def get_range_header(request: Request, file_size: int):
     range_header = request.headers.get("Range")
-    if not range_header:
-        return 0, file_size - 1
+    if not range_header or file_size <= 0:
+        return 0, max(file_size - 1, 0), False
 
     try:
-        range_val = range_header.replace("bytes=", "")
-        start_str, end_str = range_val.split("-")
-        start = int(start_str) if start_str else 0
-        end = int(end_str) if end_str else file_size - 1
-    except ValueError:
-        return 0, file_size - 1
+        value = range_header.strip()
+        if not value.lower().startswith("bytes="):
+            raise ValueError
+        range_val = value[6:].split(",", 1)[0]
+        start_str, end_str = range_val.split("-", 1)
 
-    return start, min(end, file_size - 1)
+        if start_str:
+            start = int(start_str)
+            end = int(end_str) if end_str else file_size - 1
+        else:
+            suffix = int(end_str)
+            if suffix <= 0:
+                raise ValueError
+            start = max(file_size - suffix, 0)
+            end = file_size - 1
+
+        if start < 0 or start >= file_size or end < start:
+            raise ValueError
+        return start, min(end, file_size - 1), True
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=416,
+            detail="Requested byte range is not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
 
 async def get_streaming_response(clients: list[TelegramClient], file, file_size: int, filename: str, mime_type: str, request: Request):
     start, end = get_range_header(request, file_size)
@@ -190,7 +207,7 @@ async def get_streaming_response(clients: list[TelegramClient], file, file_size:
         "Access-Control-Allow-Origin": "*",
     }
 
-    status_code = 206 if request.headers.get("Range") else 200
+    status_code = 206 if is_partial else 200
 
     # Use ultra-high-speed streamer for maximum performance
     return StreamingResponse(

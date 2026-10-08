@@ -1,212 +1,226 @@
-# 👑 Telegram Direct Media Streamer & Link Generator
+# Anizoneflix
 
-> ⚡ **Ultra-Fast, Premium Telegram File to Direct Download & Streaming Link Generator Bot with Multi-Audio Track Switching, Web Player, and Cloudflare Tunnel Integration.**
+A lightweight media-link and streaming service with a Telegram bot, browser player, multi-session streaming, audio-track remuxing, MongoDB and optional Redis.
 
----
+**Official:** https://t.me/anizoneflix  
+**Handle:** @anizoneflix
 
-## 🌟 Key Features
+## What changed
 
-- ⚡ **Ultra-High Speed Streaming:** Powered by multi-session parallel downloads from Telegram servers.
-- 🍿 **Web Media Player:** Instant browser playback with built-in Plyr player and support for external app players (VLC, MX Player, Infuse, PotPlayer, MPV, PLAYit, etc.).
-- 🎧 **Multi-Audio Track Switcher:** Select and switch audio tracks on-the-fly using lossless FFmpeg remuxing.
-- 👑 **Premium Bot UI:** Stylish Telegram UI with custom blockquotes (`>`), premium emojis, and interactive buttons.
-- 🤖 **User-Only Protection:** Intelligent bot filtering ensuring the bot only responds to real human users.
-- 🛡️ **Security & Admin Tools:** User ban/unban commands, rate limiting, channel force subscribe check, and broadcast features.
-- 🚀 **One-Click VPS Deployment:** Fully automated single-command setup via `deploy.vps`.
+- Clean, dependency-light web UI for low-end phones.
+- Removed Tailwind, Font Awesome, Google Fonts, HTMX and other heavy frontend dependencies.
+- Native HTML5 video controls instead of a large player framework.
+- Added `/health` for Render, Koyeb, Heroku and container health checks.
+- Added expiry enforcement, cached track discovery, access counting and safer HTTP range handling.
+- Fixed clean shutdown for all active clients.
+- Docker image uses Python 3.12 slim, FFmpeg and a non-root runtime user.
+- Docker listens on the platform-provided `PORT`.
+- VPS Compose uses internal MongoDB and Redis networking.
+- Admin panel now requires HTTP Basic Authentication.
+- Removed credentials and secrets from the example environment file.
+- Stable container tags and persistent database volumes.
+- Safer `.dockerignore`.
+- Rewritten deployment documentation.
 
----
+> No deployment system can honestly guarantee 100% success with invalid credentials, unavailable databases, provider restrictions or account limits. This project uses one portable Docker image and documents the required environment for each provider.
 
-## 💻 VPS System Requirements
-
-| Resource | Minimum | Recommended |
-| :--- | :--- | :--- |
-| **OS** | Ubuntu 20.04/22.04/24.04, Debian 11/12, or AlmaLinux | Ubuntu 22.04 LTS |
-| **CPU** | 1 vCPU | 2+ vCPU |
-| **RAM** | 1 GB | 2 GB+ |
-| **Disk Space** | 10 GB SSD | 20 GB+ SSD |
-| **Docker** | Version 20.10+ | Latest |
-
----
-
-## 🚀 Quick Start (One-Click VPS Deployment)
-
-Deploying on a VPS takes only **one command**:
-
-```bash
-git clone https://github.com/your-username/your-repo.git
-cd your-repo
-chmod +x deploy.vps
-./deploy.vps
-```
-
-### What `deploy.vps` Does Automatically:
-1. Verifies root/sudo privileges and system requirements (`curl`, `git`).
-2. Installs Docker and Docker Compose if not present.
-3. Generates `.env` from `.env.example` if missing.
-4. Validates configuration parameters.
-5. Builds Docker images and starts MongoDB, Redis, and Web services.
-6. Performs service health checks and displays live status summary.
-
----
-
-## ⚙️ Configuration (`.env`)
-
-Edit the `.env` file to configure your credentials:
+## Required environment
 
 ```env
-# Mandatory Telegram Credentials
-API_ID=12345678
-API_HASH=your_api_hash_here
-BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyZ
+API_ID=123456
+API_HASH=your_api_hash
+BOT_TOKEN=your_bot_token
 OWNER_ID=123456789
 
-# Administrative Settings
-ADMINS=123456789,987654321
-FORCE_SUB_CHANNELS=-1001234567890
-CHANNEL_ID=-1001234567890
-
-# Public Domain Base URL (HTTP/HTTPS)
-BASE_URL=https://stream.yourdomain.com
-
-# Multi-Session High-Speed Acceleration (Comma-Separated Telethon String Sessions)
-SESSIONS=1BJW...AA=,1BJW...BB=
-
-# Expiry & Port
-DEFAULT_EXPIRY=0
+BASE_URL=https://your-public-domain.example
 PORT=8000
+
+MONGODB_URI=mongodb+srv://...
+REDIS_URL=redis://...
+SESSIONS=
+
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=use-a-long-random-password
+
+ADMINS=
+FORCE_SUB_CHANNELS=
+CHANNEL_ID=
+DEFAULT_EXPIRY=24
+DEBUG=false
 ```
 
----
+Never commit `.env` or real credentials.
 
-## ☁️ Setting Up Cloudflare Tunnel (Free HTTPS Domain)
+## Docker: local / VPS / any Docker host
 
-Cloudflare Tunnel (`cloudflared`) connects your local web port (8000) directly to Cloudflare without opening incoming firewall ports or needing dynamic DNS.
-
-### Step 1: Add Domain to Cloudflare
-1. Sign up or log into [Cloudflare](https://www.cloudflare.com).
-2. Add your domain name (e.g., `yourdomain.com`) and update your domain's nameservers at your registrar to Cloudflare's nameservers.
-
-### Step 2: Install Cloudflared on VPS
-Run the following commands on your VPS:
+Build:
 
 ```bash
-# Add Cloudflare GPG key and repository
-sudo mkdir -p /usr/share/keyrings
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-
-# Install cloudflared
-sudo apt-get update && sudo apt-get install -y cloudflared
+docker build -t anizoneflix .
 ```
 
-### Step 3: Login to Cloudflare
-Authenticate `cloudflared` with your Cloudflare account:
+Run:
 
 ```bash
-cloudflared tunnel login
+docker run -d   --name anizoneflix   --restart unless-stopped   -p 8000:8000   --env-file .env   anizoneflix
 ```
-*Click the URL displayed in the terminal to authorize the VPS.*
 
-### Step 4: Create a Tunnel
-Create a named tunnel (e.g., `tg-streamer`):
+Check:
 
 ```bash
-cloudflared tunnel create tg-streamer
+curl http://127.0.0.1:8000/health
+docker logs -f anizoneflix
 ```
-*Note the Tunnel ID outputted by this command.*
 
-### Step 5: Route Subdomain DNS
-Route your subdomain to the tunnel:
+The application listens on `0.0.0.0:${PORT}`. Docker hosts can therefore inject their own port.
+
+## VPS with MongoDB + Redis
+
+Install Docker and Docker Compose, then:
 
 ```bash
-cloudflared tunnel route dns tg-streamer stream.yourdomain.com
-```
-
-### Step 6: Create Tunnel Configuration
-Create `/etc/cloudflared/config.yml` or `~/.cloudflared/config.yml`:
-
-```yaml
-tunnel: YOUR_TUNNEL_ID_HERE
-credentials-file: /root/.cloudflared/YOUR_TUNNEL_ID_HERE.json
-
-ingress:
-  - hostname: stream.yourdomain.com
-    service: http://localhost:8000
-  - service: http_status:404
-```
-
-### Step 7: Install and Run Cloudflared Service
-Install `cloudflared` as a system service so it starts automatically on boot:
-
-```bash
-sudo cloudflared --config /etc/cloudflared/config.yml service install
-sudo systemctl start cloudflared
-sudo systemctl enable cloudflared
-```
-
-### Step 8: Update BASE_URL and Restart Bot
-Update `.env`:
-```env
-BASE_URL=https://stream.yourdomain.com
-```
-
-Redeploy:
-```bash
-./deploy.vps
-```
-
----
-
-## 🛠️ Service Management Commands
-
-Manage your deployment using Docker Compose:
-
-```bash
-# View live application logs
-docker compose logs -f web
-
-# View all container statuses
-docker compose ps
-
-# Restart all services
-docker compose restart
-
-# Stop all services
-docker compose down
-
-# Rebuild and start services
+cp .env.example .env
+nano .env
 docker compose up -d --build
+docker compose ps
+docker compose logs -f web
 ```
 
----
+Open:
 
-## 🔄 Update & Redeploy Workflow
+```text
+http://YOUR_SERVER_IP:8000
+```
 
-To update your deployment to the latest version:
+For a reverse proxy, point your HTTPS domain to port `8000`.
+
+### Update
 
 ```bash
 git pull
-./deploy.vps
+docker compose up -d --build
+docker image prune -f
 ```
 
----
+### Stop
 
-## ❓ Troubleshooting & FAQs
+```bash
+docker compose down
+```
 
-### 1. Bot Is Not Responding To Messages
-- Ensure `BOT_TOKEN`, `API_ID`, and `API_HASH` in `.env` are valid.
-- Verify the bot user is an **Administrator** in any specified `FORCE_SUB_CHANNELS` or `CHANNEL_ID`.
-- Check logs for errors: `docker compose logs -f web`.
+Data is stored in the named MongoDB and Redis volumes.
 
-### 2. MongoDB or Redis Connection Errors
-- If running with Docker Compose, ensure `MONGODB_URI=mongodb://mongodb:27017/tg_media_bot` and `REDIS_URL=redis://redis:6379/0`.
+## Render
 
-### 3. Port 8000 Already In Use
-- Stop conflicting services or change `PORT=8080` in `.env` and `docker-compose.yml`.
+Create a **Web Service** from the repository.
 
----
+- Runtime: Docker
+- Dockerfile: `Dockerfile`
+- No fixed port is required; the app reads `PORT`.
+- Add all required environment variables from `.env.example`.
+- Use a managed MongoDB-compatible database and Redis-compatible service.
+- Set `BASE_URL` to the public Render URL after deployment if needed.
 
-## 📄 License
+Health check path:
 
-This project is open-source under the MIT License.
+```text
+/health
+```
+
+Do not use the VPS `docker-compose.yml` as the Render deployment definition.
+
+## Koyeb
+
+Create an App/Service from the repository and select **Dockerfile**.
+
+- Dockerfile: `Dockerfile`
+- HTTP port: `8000` or the provider's configured container port.
+- Add the required environment variables.
+- Use external MongoDB and Redis.
+- Health endpoint: `/health`.
+
+The container automatically honors the `PORT` environment variable.
+
+## Heroku Container Registry
+
+Heroku does not run `docker-compose.yml` as the application runtime. Use the Docker image as the web process.
+
+```bash
+heroku login
+heroku create your-app-name
+
+heroku container:login
+docker build -t registry.heroku.com/YOUR_APP_NAME/web .
+docker tag registry.heroku.com/YOUR_APP_NAME/web:latest registry.heroku.com/YOUR_APP_NAME/web
+docker push registry.heroku.com/YOUR_APP_NAME/web
+
+heroku container:release web -a YOUR_APP_NAME
+```
+
+Set configuration:
+
+```bash
+heroku config:set API_ID=... API_HASH=... BOT_TOKEN=... OWNER_ID=... -a YOUR_APP_NAME
+heroku config:set MONGODB_URI=... REDIS_URL=... ADMIN_USERNAME=admin ADMIN_PASSWORD=... -a YOUR_APP_NAME
+```
+
+Heroku supplies `PORT`; the Docker command already uses it.
+
+## Other Docker platforms
+
+The same `Dockerfile` is intended for platforms that accept OCI/Docker images, including VPS Docker hosts and managed container services.
+
+General requirements:
+
+1. Build from `Dockerfile`.
+2. Provide required environment variables.
+3. Provide reachable MongoDB.
+4. Provide Redis if rate limiting/cache needs shared state.
+5. Expose the HTTP service on the platform-provided port.
+6. Set `BASE_URL` to the public HTTPS URL.
+
+## Health and diagnostics
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+```
+
+Expected:
+
+```json
+{"status":"ok","service":"anizoneflix"}
+```
+
+If the health endpoint fails, inspect:
+
+```bash
+docker logs --tail 200 anizoneflix
+```
+
+For Compose:
+
+```bash
+docker compose logs --tail 200 web
+docker compose ps
+```
+
+Common causes:
+
+- Invalid `API_ID`, `API_HASH` or `BOT_TOKEN`.
+- MongoDB URI is unreachable.
+- Redis URI is unreachable.
+- `BASE_URL` is wrong.
+- Provider blocks long-running connections or outbound access.
+- Required bot permissions are missing.
+
+## Security
+
+- Keep `.env` private.
+- Use a long random `ADMIN_PASSWORD`.
+- Do not expose MongoDB or Redis ports publicly.
+- Put the service behind HTTPS in production.
+- Rotate any credential that was previously committed or shared.
+
+## License
+
+MIT.
