@@ -1,80 +1,137 @@
 {% extends "base.html" %}
-{% block title %}{{ file.filename }} · Anizoneflix{% endblock %}
+{% block title %}{{ file.filename }} · ANIZONEFLIX{% endblock %}
+{% block head %}
+<style>
+  .player-box{background:#000;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  video{display:block;width:100%;max-height:72vh;background:#000;aspect-ratio:16/9}
+  .info{padding:16px}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;color:var(--muted);font-size:13px}
+  .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.select{background:#1b1b22;color:#fff;border:1px solid var(--line);border-radius:9px;padding:10px;max-width:100%}
+  .player-panel{display:none}.player-panel.active{display:block}
+  .player-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
+  .pbtn{min-height:44px;border:1px solid var(--line);border-radius:10px;background:#1b1b22;color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:9px;cursor:pointer}
+  .pbtn:hover{border-color:#555565}.copy-ok{font-size:12px;color:#69e69a;min-height:18px}
+  .player-tabs{position:fixed;z-index:30;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(94vw,520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:5px;background:#15151b;border:1px solid #30303a;border-radius:14px;box-shadow:0 8px 28px #000}
+  .tab{border:0;background:transparent;color:#9d9da8;padding:9px 4px;border-radius:9px;font-size:12px;cursor:pointer}.tab.active{background:#272730;color:#fff}
+  .notice{padding:10px 12px;border-radius:9px;background:#1a1820;color:#bbb;font-size:12px;margin-top:10px}
+  @media(min-width:900px){.watch-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}.side{align-self:start;position:sticky;top:72px}}
+</style>
+{% endblock %}
 {% block content %}
-<div class="card player-box">
-  <video id="player" class="player" playsinline controls preload="metadata">
-    <source id="video-source" src="/stream/{{ file.short_code }}" type="{{ file.mime_type }}">
-  </video>
-</div>
-
-<div id="track-selector-container" class="card meta space" hidden>
-  <div class="row">
-    <strong>Audio track</strong>
-    <select id="audio-track-select" style="max-width:420px" onchange="switchAudioTrack(this.value)">
-      <option value="-1">Original stream</option>
-    </select>
-  </div>
-  <div id="remux-notice" class="notice space" hidden>Selected audio uses remuxing. Seeking may be limited.</div>
-</div>
-
-<section class="card meta space">
-  <h1 style="margin:0 0 10px;font-size:clamp(1.25rem,4vw,2rem);word-break:break-word">{{ file.filename }}</h1>
-  <div class="muted">Size: {{ (file.file_size / (1024*1024))|round(2) }} MB · Views: {{ file.access_count }}</div>
-  <div class="row space">
-    <a class="btn btn-primary" href="/dl/{{ file.short_code }}">Direct link</a>
-    <button class="btn" type="button" onclick="copyLink()">Copy link</button>
-  </div>
-  <div class="space">
-    <div class="muted" style="margin-bottom:8px">Open in player</div>
-    <div class="player-btns">
-      <a class="btn" href="vlc://{{ base_url }}/stream/{{ file.short_code }}">VLC</a>
-      <a class="btn" href="intent:{{ base_url }}/stream/{{ file.short_code }}#Intent;package=com.mxtech.videoplayer.ad;type=video/*;end">MX Player</a>
-      <a class="btn" href="intent:{{ base_url }}/stream/{{ file.short_code }}#Intent;package=com.brouken.player;type=video/*;end">Just Player</a>
-      <a class="btn" href="intent:{{ base_url }}/stream/{{ file.short_code }}#Intent;package=is.xyz.mpv;type=video/*;end">MPV</a>
+<div class="watch-grid">
+  <section>
+    <div class="player-box">
+      <video id="player" controls playsinline preload="metadata">
+        <source id="video-source" src="/stream/{{ file.short_code }}" type="{{ file.mime_type }}">
+        Your browser cannot play this media.
+      </video>
     </div>
-  </div>
-</section>
+    <div class="card info" style="margin-top:10px">
+      <div style="font-weight:700;word-break:break-word">{{ file.filename }}</div>
+      <div class="meta"><span>{{ (file.file_size / (1024*1024))|round(2) }} MB</span><span>{{ file.access_count }} views</span></div>
+      <div id="track-box" class="tools" style="display:none">
+        <select id="audio-select" class="select" aria-label="Audio track"></select>
+        <span id="track-status" class="muted" style="align-self:center;font-size:12px"></span>
+      </div>
+      <div class="tools">
+        <a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>
+        <button class="btn" type="button" onclick="copyStream()">Copy stream URL</button>
+      </div>
+      <div id="copy-status" class="copy-ok"></div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="card" style="padding:14px">
+      <b>Open in player</b>
+      <p class="muted" style="font-size:12px;margin:5px 0 12px">Choose a device type below. Android buttons use explicit VIEW intents; desktop links use installed-player protocols.</p>
+      <div id="mobile" class="player-panel active"><div class="player-grid" id="mobile-grid"></div></div>
+      <div id="desktop" class="player-panel"><div class="player-grid" id="desktop-grid"></div></div>
+      <div id="tablet" class="player-panel"><div class="player-grid" id="tablet-grid"></div></div>
+      <div id="tv" class="player-panel"><div class="player-grid" id="tv-grid"></div></div>
+      <div class="notice">If a player does not open, use <b>Copy stream URL</b> and paste it into that player's Open URL/Network Stream option.</div>
+    </div>
+  </aside>
+</div>
+
+<nav class="player-tabs" aria-label="Player device categories">
+  <button class="tab active" data-tab="mobile">Mobile</button>
+  <button class="tab" data-tab="desktop">Desktop</button>
+  <button class="tab" data-tab="tablet">Tablet</button>
+  <button class="tab" data-tab="tv">TV</button>
+</nav>
 
 <script>
-const SHORT_CODE={{ file.short_code|tojson }};
-const ORIGINAL_SRC='/stream/'+SHORT_CODE;
-const REMUX_BASE='/remux/'+SHORT_CODE;
-let currentAudioTrack=-1;
-const video=document.getElementById('player');
+const STREAM_URL = new URL('/stream/{{ file.short_code }}', window.location.origin).href;
+const REMUX_URL = new URL('/remux/{{ file.short_code }}', window.location.origin).href;
+const player = document.getElementById('player');
+
+function androidIntent(url, pkg) {
+  const u = new URL(url);
+  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${u.protocol.replace(':','')};action=android.intent.action.VIEW;type=video/*;package=${pkg};end`;
+}
+function addPlayer(gridId, label, href) {
+  const a=document.createElement('a'); a.className='pbtn'; a.textContent=label; a.href=href;
+  if (!href.startsWith('intent:')) { a.target='_blank'; a.rel='noopener'; }
+  document.getElementById(gridId).appendChild(a);
+}
+
+const android = [
+  ['VLC', 'org.videolan.vlc'],
+  ['MX Player', 'com.mxtech.videoplayer.ad'],
+  ['Just Player', 'com.brouken.player'],
+  ['mpv', 'is.xyz.mpv'],
+  ['Kodi', 'org.xbmc.kodi']
+];
+android.forEach(([n,p]) => addPlayer('mobile-grid', n, androidIntent(STREAM_URL,p)));
+addPlayer('mobile-grid','Copy URL', '#');
+addPlayer('tablet-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc'));
+addPlayer('tablet-grid','MX Player', androidIntent(STREAM_URL,'com.mxtech.videoplayer.ad'));
+addPlayer('tablet-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player'));
+addPlayer('tablet-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi'));
+
+addPlayer('desktop-grid','VLC', 'vlc://' + STREAM_URL);
+addPlayer('desktop-grid','PotPlayer', 'potplayer://' + STREAM_URL);
+addPlayer('desktop-grid','Open URL', STREAM_URL);
+addPlayer('desktop-grid','Copy URL', '#');
+
+addPlayer('tv-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc'));
+addPlayer('tv-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi'));
+addPlayer('tv-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player'));
+addPlayer('tv-grid','Open URL', STREAM_URL);
+
+document.querySelectorAll('.pbtn[href="#"]').forEach(b=>b.addEventListener('click', e=>{e.preventDefault();copyStream()}));
+
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.player-panel').forEach(x=>x.classList.remove('active'));
+    tab.classList.add('active'); document.getElementById(tab.dataset.tab).classList.add('active');
+  });
+});
+
+async function copyStream(){
+  try { await navigator.clipboard.writeText(STREAM_URL); document.getElementById('copy-status').textContent='Stream URL copied.'; }
+  catch(e){ window.prompt('Copy stream URL:', STREAM_URL); }
+}
 
 async function loadTracks(){
   try{
-    const r=await fetch('/api/tracks/'+encodeURIComponent(SHORT_CODE),{headers:{'Accept':'application/json'}});
+    const r=await fetch('/api/tracks/{{ file.short_code }}',{headers:{'Accept':'application/json'}});
     if(!r.ok)return;
-    const data=await r.json();
-    if(!data.has_multiple_audio)return;
-    const box=document.getElementById('track-selector-container');
-    const select=document.getElementById('audio-track-select');
-    box.hidden=false;
-    for(const track of (data.audio_tracks||[])){
-      const option=document.createElement('option');
-      option.value=track.audio_index;
-      option.textContent=track.label||('Track '+(track.audio_index+1));
-      select.appendChild(option);
-    }
-  }catch(e){console.debug('track discovery unavailable')}
+    const d=await r.json(), tracks=d.audio_tracks||[];
+    if(tracks.length<2)return;
+    const box=document.getElementById('track-box'), sel=document.getElementById('audio-select');
+    box.style.display='flex'; sel.innerHTML='';
+    tracks.forEach(t=>{const o=document.createElement('option');o.value=t.audio_index;o.textContent=t.label||`Track ${t.audio_index+1}`;sel.appendChild(o)});
+    sel.addEventListener('change',()=>switchAudio(Number(sel.value)));
+  }catch(e){console.debug('Track discovery unavailable',e)}
 }
-function switchAudioTrack(value){
-  const index=Number.parseInt(value,10);
-  if(index===currentAudioTrack)return;
-  const time=video.currentTime||0, playing=!video.paused;
-  video.src=index===-1?ORIGINAL_SRC:REMUX_BASE+'?audio='+encodeURIComponent(index);
-  document.getElementById('remux-notice').hidden=index===-1;
-  currentAudioTrack=index;
-  video.load();
-  video.addEventListener('loadedmetadata',function restore(){
-    if(time>0)video.currentTime=time;
-    if(playing)video.play().catch(()=>{});
-  },{once:true});
-}
-async function copyLink(){
-  try{await navigator.clipboard.writeText(location.href);alert('Link copied');}
-  catch(e){prompt('Copy this link:',location.href)}
+async function switchAudio(index){
+  const wasPlaying=!player.paused, time=player.currentTime;
+  const src=REMUX_URL+'?audio='+encodeURIComponent(index);
+  player.src=src; document.getElementById('track-status').textContent='Preparing selected audio…';
+  try{await player.play();}catch(e){}
+  player.addEventListener('loadedmetadata',()=>{try{player.currentTime=time}catch(e){};if(wasPlaying)player.play().catch(()=>{});document.getElementById('track-status').textContent='Selected audio';},{once:true});
 }
 loadTracks();
 </script>

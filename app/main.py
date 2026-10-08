@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     await session_manager.stop()
     logger.info("Application stopped")
 
-app = FastAPI(title="Anizoneflix", description="Anizoneflix media link and streaming service.", lifespan=lifespan)
+app = FastAPI(title="Telegram Direct Media Link Generator", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
@@ -48,7 +48,7 @@ app.include_router(admin_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -60,7 +60,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
-@app.get("/health", include_in_schema=False)
+@app.get("/health")
 async def health():
     return {"status": "ok", "service": "anizoneflix"}
 
@@ -68,18 +68,10 @@ async def health():
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-def _is_expired(file_data):
-    expiry = file_data.get("expiry_time")
-    if not expiry:
-        return False
-    if expiry.tzinfo is None:
-        return expiry <= datetime.datetime.utcnow()
-    return expiry <= datetime.datetime.now(datetime.timezone.utc)
-
 @app.get("/watch/{short_code}")
 async def watch_page(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data or _is_expired(file_data):
+    if not file_data:
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
     return templates.TemplateResponse("watch.html", {
@@ -92,8 +84,11 @@ async def watch_page(request: Request, short_code: str):
 @app.get("/stream/{short_code}")
 async def stream_file(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data or _is_expired(file_data):
-        raise HTTPException(status_code=404, detail="File not found or expired")
+    if not file_data:
+        raise HTTPException(status_code=404, detail="File not found")
+    if file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow():
+        await files_col.delete_one({"short_code": short_code})
+        raise HTTPException(status_code=404, detail="Link expired")
 
     await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
 

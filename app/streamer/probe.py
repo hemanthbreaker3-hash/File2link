@@ -249,10 +249,10 @@ def _build_audio_label(language: str, title: str, stream: dict) -> str:
     channels = stream.get('channels', 2)
     
     # Channel layout label
-    if channels >= 6:
-        ch_label = '5.1'
-    elif channels >= 8:
+    if channels >= 8:
         ch_label = '7.1'
+    elif channels >= 6:
+        ch_label = '5.1'
     elif channels == 2:
         ch_label = 'Stereo'
     elif channels == 1:

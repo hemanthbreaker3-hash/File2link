@@ -5,12 +5,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT:-8000}:${PORT:-8000}"
     env_file:
       - .env
     environment:
-      MONGODB_URI: mongodb://mongodb:27017/anizoneflix
-      REDIS_URL: redis://redis:6379/0
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/tg_media_bot}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      PORT: ${PORT:-8000}
     depends_on:
       mongodb:
         condition: service_healthy

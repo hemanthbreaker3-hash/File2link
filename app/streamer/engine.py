@@ -163,36 +163,30 @@ async def media_streamer(clients: list[TelegramClient], file, start: int, end: i
                 break
 
 def get_range_header(request: Request, file_size: int):
+    """Parse a single HTTP byte range, including suffix ranges."""
     range_header = request.headers.get("Range")
-    if not range_header or file_size <= 0:
-        return 0, max(file_size - 1, 0), False
+    if not range_header:
+        return 0, max(file_size - 1, 0)
 
     try:
-        value = range_header.strip()
-        if not value.lower().startswith("bytes="):
+        unit, value = range_header.split("=", 1)
+        if unit.strip().lower() != "bytes":
             raise ValueError
-        range_val = value[6:].split(",", 1)[0]
-        start_str, end_str = range_val.split("-", 1)
-
-        if start_str:
-            start = int(start_str)
-            end = int(end_str) if end_str else file_size - 1
-        else:
-            suffix = int(end_str)
-            if suffix <= 0:
+        start_s, end_s = value.split("-", 1)
+        if start_s.strip() == "":
+            length = int(end_s)
+            if length <= 0:
                 raise ValueError
-            start = max(file_size - suffix, 0)
+            start = max(file_size - length, 0)
             end = file_size - 1
-
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s.strip() else file_size - 1
         if start < 0 or start >= file_size or end < start:
             raise ValueError
-        return start, min(end, file_size - 1), True
+        return start, min(end, file_size - 1)
     except (ValueError, TypeError):
-        raise HTTPException(
-            status_code=416,
-            detail="Requested byte range is not satisfiable",
-            headers={"Content-Range": f"bytes */{file_size}"},
-        )
+        return 0, max(file_size - 1, 0)
 
 async def get_streaming_response(clients: list[TelegramClient], file, file_size: int, filename: str, mime_type: str, request: Request):
     start, end = get_range_header(request, file_size)
@@ -202,12 +196,15 @@ async def get_streaming_response(clients: list[TelegramClient], file, file_size:
         "Accept-Ranges": "bytes",
         "Content-Length": str(end - start + 1),
         "Content-Type": mime_type,
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Cache-Control": "public, max-age=31536000",  # 1 year caching for CDN
+        "Content-Disposition": (
+            f'attachment; filename="{filename}"'
+            if request.url.path.startswith("/dl/")
+            else f'inline; filename="{filename}"'
+        ),        "Cache-Control": "public, max-age=31536000",  # 1 year caching for CDN
         "Access-Control-Allow-Origin": "*",
     }
 
-    status_code = 206 if is_partial else 200
+    status_code = 206 if request.headers.get("Range") else 200
 
     # Use ultra-high-speed streamer for maximum performance
     return StreamingResponse(

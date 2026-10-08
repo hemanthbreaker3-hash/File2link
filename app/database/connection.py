@@ -7,8 +7,6 @@ import os
 class Settings(BaseSettings):
     MONGODB_URI: Optional[str] = None
     DATABASE_URL: Optional[str] = None
-    ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "change-this-password"
     REDIS_URL: str = "redis://localhost:6379/0"
     API_ID: int
     API_HASH: str
@@ -43,7 +41,7 @@ class Settings(BaseSettings):
 
     @property
     def mongo_uri(self) -> str:
-        return self.MONGODB_URI or self.DATABASE_URL or "mongodb://localhost:27017/anizoneflix"
+        return self.MONGODB_URI or self.DATABASE_URL or "mongodb://localhost:27017/tg_media_bot"
     
     @property
     def admin_list(self):
@@ -53,16 +51,14 @@ class Settings(BaseSettings):
     def fsub_list(self):
         return [int(x) for x in self.FORCE_SUB_CHANNELS.split(",") if x.strip()]
 
-    model_config = {
-        "env_file": ".env",
-        "extra": "ignore",
-        "case_sensitive": True,
-    }
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()
 
 client = AsyncIOMotorClient(settings.mongo_uri)
-db = client.get_database("anizoneflix")
+db = client.get_database("tg_media_bot")
 
 # Collections
 files_col = db.files

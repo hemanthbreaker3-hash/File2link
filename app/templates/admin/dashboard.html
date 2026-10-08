@@ -1,11 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Admin · Anizoneflix{% endblock %}
+{% block title %}ANIZONEFLIX Admin{% endblock %}
 {% block content %}
-<h1 style="margin-top:0">Dashboard</h1>
-<div class="grid grid-3">
- <div class="card stat"><span class="muted">Users</span><b>{{ total_users }}</b></div>
- <div class="card stat"><span class="muted">Files</span><b>{{ total_files }}</b></div>
- <div class="card stat"><span class="muted">CPU</span><b>{{ cpu|round(1) }}%</b><div class="bar"><i style="width:{{ cpu }}%"></i></div></div>
+<style>
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.admin-card{background:#15151b;border:1px solid #282832;border-radius:12px;padding:16px}
+.admin-table{width:100%;border-collapse:collapse}.admin-table th,.admin-table td{padding:10px;border-bottom:1px solid #282832;text-align:left;white-space:nowrap}
+.admin-table-wrap{overflow:auto}.admin-input{background:#101015;border:1px solid #30303a;color:#fff;border-radius:8px;padding:10px;width:min(100%,320px)}
+.admin-btn{background:#ff2f6d;border:0;color:#fff;border-radius:8px;padding:10px 13px;cursor:pointer}
+</style>
+<h1>Admin Dashboard</h1>
+<div class="admin-grid">
+<div class="admin-card"><span class="muted">Total Users</span><h2>{{ total_users }}</h2></div>
+<div class="admin-card"><span class="muted">Total Files</span><h2>{{ total_files }}</h2></div>
+<div class="admin-card"><span class="muted">CPU Usage</span><h2>{{ cpu }}%</h2></div>
+<div class="admin-card"><span class="muted">RAM Usage</span><h2>{{ ram }}%</h2></div>
 </div>
-<div class="row space"><a class="btn" href="/admin/users">Users</a><a class="btn" href="/admin/files">Files</a></div>
+<div class="admin-grid" style="margin-top:12px">
+<div class="admin-card"><b>Users</b><p class="muted">Manage registered users.</p><a class="btn" href="/admin/users">View users</a></div>
+<div class="admin-card"><b>Files</b><p class="muted">Search and manage generated links.</p><a class="btn" href="/admin/files">View files</a></div>
+</div>
+
 {% endblock %}

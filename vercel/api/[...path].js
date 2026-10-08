@@ -12,7 +12,7 @@ function getBackendUrl() {
     const configPath = path.join(process.cwd(), 'vercel', 'config.json');
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (config.BACKEND_URL && !config.BACKEND_URL.includes('YOUR_VPS_IP')) {
+      if (config.BACKEND_URL && /^https?:\/\//i.test(config.BACKEND_URL)) {
         return config.BACKEND_URL;
       }
     }

@@ -1,16 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Anizoneflix{% endblock %}
+{% block title %}ANIZONEFLIX{% endblock %}
 {% block content %}
-<section class="hero">
-  <h1>Anizoneflix</h1>
-  <p>Simple, fast media links and streaming with a clean interface built for phones and low-end devices.</p>
-  <div class="row" style="justify-content:center;margin-top:20px">
-    <a class="btn btn-primary" href="https://t.me/anizoneflix" rel="noopener">@anizoneflix</a>
-  </div>
+<section style="padding:44px 0 28px;text-align:center">
+  <div class="muted" style="font-size:12px;letter-spacing:1.5px">ANIZONEFLIX</div>
+  <h1 style="font-size:clamp(30px,7vw,54px);line-height:1.05;margin:10px 0">Fast, simple media streaming.</h1>
+  <p class="muted" style="max-width:620px;margin:0 auto">Watch Telegram media directly in your browser or open it in a player installed on your device.</p>
 </section>
-<section class="grid grid-3">
-  <article class="card feature"><div class="icon">⚡</div><h2>Fast links</h2><p>Generate a direct link without a heavy web interface.</p></article>
-  <article class="card feature"><div class="icon">▶</div><h2>Easy streaming</h2><p>Open supported media directly in your browser or player.</p></article>
-  <article class="card feature"><div class="icon">✓</div><h2>Lightweight</h2><p>No large frontend framework is required for the web UI.</p></article>
+<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+  <article class="card" style="padding:20px"><b>Direct playback</b><p class="muted">Range requests and browser-friendly streaming for quick seeking.</p></article>
+  <article class="card" style="padding:20px"><b>Multiple audio tracks</b><p class="muted">Detect available tracks and switch when browser-compatible remuxing is possible.</p></article>
+  <article class="card" style="padding:20px"><b>External players</b><p class="muted">Separate player shortcuts for mobile, desktop, tablet and TV devices.</p></article>
 </section>
+<p class="muted" style="text-align:center;margin-top:22px"><a href="https://t.me/anizoneflix" target="_blank" rel="noopener">https://t.me/anizoneflix</a></p>
 {% endblock %}

@@ -1,30 +1,20 @@
-# Anizoneflix - portable Docker image
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PORT=8000
+ENV PYTHONDONTWRITEBYTECODE=1     PYTHONUNBUFFERED=1     PIP_NO_CACHE_DIR=1     PORT=8000
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update  && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl  && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN python -m pip install --upgrade pip \
-    && pip install -r requirements.txt
+COPY requirements.txt /app/requirements.txt
+RUN python -m pip install --upgrade pip  && python -m pip install -r /app/requirements.txt
 
-COPY . .
+COPY . /app
 
-RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
-USER appuser
+RUN mkdir -p /app/app/static  && python -m compileall -q /app/app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=8s --start-period=25s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:${PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3   CMD curl -fsS "http://127.0.0.1:${PORT}/health" || exit 1
 
 CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --loop asyncio"]

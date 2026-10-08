@@ -1,9 +1,23 @@
 {% extends "base.html" %}
-{% block title %}Files · Anizoneflix{% endblock %}
+{% block title %}ANIZONEFLIX Admin{% endblock %}
 {% block content %}
-<div class="card meta"><div class="row" style="justify-content:space-between"><h1 style="margin:0">Files</h1>
-<form class="row" method="get" action="/admin/files"><input name="q" value="{{ query or '' }}" placeholder="Search filename" style="width:min(320px,70vw)"><button class="btn btn-primary" type="submit">Search</button></form></div>
-<div style="overflow:auto;margin-top:16px"><table><thead><tr><th>Filename</th><th>Size</th><th>Views</th><th>Action</th></tr></thead><tbody>
-{% for file in files %}<tr><td>{{ file.filename }}</td><td>{{ (file.file_size/(1024*1024))|round(2) }} MB</td><td>{{ file.access_count }}</td><td><a href="/watch/{{ file.short_code }}">Open</a></td></tr>{% endfor %}
+<style>
+.admin-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.admin-card{background:#15151b;border:1px solid #282832;border-radius:12px;padding:16px}
+.admin-table{width:100%;border-collapse:collapse}.admin-table th,.admin-table td{padding:10px;border-bottom:1px solid #282832;text-align:left;white-space:nowrap}
+.admin-table-wrap{overflow:auto}.admin-input{background:#101015;border:1px solid #30303a;color:#fff;border-radius:8px;padding:10px;width:min(100%,320px)}
+.admin-btn{background:#ff2f6d;border:0;color:#fff;border-radius:8px;padding:10px 13px;cursor:pointer}
+</style>
+<div class="admin-card">
+<div style="display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">
+<h1>File Management</h1>
+<form action="/admin/files" method="get"><input class="admin-input" name="q" placeholder="Search files" value="{{ query or '' }}"><button class="admin-btn" type="submit">Search</button></form>
+</div>
+<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>Filename</th><th>Size</th><th>Views</th><th>Created</th><th>Actions</th></tr></thead><tbody>
+{% for file in files %}<tr><td>{{ file.filename }}</td><td>{{ (file.file_size / (1024*1024))|round(2) }} MB</td><td>{{ file.access_count }}</td><td>{{ file.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td><button class="btn" onclick="deleteFile('{{ file.short_code }}')">Delete</button> <a class="btn" href="/watch/{{ file.short_code }}" target="_blank" rel="noopener">Open</a></td></tr>{% endfor %}
 </tbody></table></div></div>
+<script>
+async function deleteFile(code){if(!confirm('Delete this link?'))return;const r=await fetch('/admin/files/delete/'+encodeURIComponent(code),{method:'POST'});if(r.ok)location.reload();else alert('Delete failed');}
+</script>
+
 {% endblock %}

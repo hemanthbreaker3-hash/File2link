@@ -88,7 +88,7 @@ def register_handlers(bot):
         buttons = []
         if settings.FORCE_SUB_CHANNELS:
             ch_id = settings.FORCE_SUB_CHANNELS.split(',')[0].strip().replace("-100", "")
-            buttons.append([Button.url("@anizoneflix", "https://t.me/anizoneflix")])
+            buttons.append([Button.url("📢 Join Updates Channel", f"https://t.me/{ch_id}")])
 
         await event.respond(start_text, buttons=buttons if buttons else None)
 
