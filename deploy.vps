@@ -31,13 +31,32 @@ fi
 [ -f .env ] || {
   [ -f .env.example ] || die ".env.example is missing."
   cp .env.example .env
-  warn ".env created from .env.example. Fill in Telegram credentials before continuing."
+  warn ".env created from .env.example."
 }
+
+# If config.env exists, pull in any values the user filled in there and
+# write them into .env. Blank fields in config.env are left alone, so this
+# is safe to leave in place (and re-run) even after .env is already set up.
+if [ -f config.env ]; then
+  applied=0
+  while IFS='=' read -r key value; do
+    case "$key" in ''|'#'*) continue;; esac
+    value="${value%%$'\r'}"
+    [ -n "$value" ] || continue
+    if grep -qE "^${key}=" .env; then
+      sed -i.bak -E "s#^${key}=.*#${key}=${value}#" .env && rm -f .env.bak
+    else
+      echo "${key}=${value}" >> .env
+    fi
+    applied=$((applied + 1))
+  done < config.env
+  [ "$applied" -gt 0 ] && info "Applied $applied value(s) from config.env into .env."
+fi
 
 # Refuse obvious placeholders rather than deploying a broken container.
 for key in API_ID API_HASH BOT_TOKEN OWNER_ID; do
   value="$(grep -E "^${key}=" .env | head -n1 | cut -d= -f2- || true)"
-  case "$value" in ""|YOUR_*|your_*|123456*) die "$key is not configured in .env.";; esac
+  case "$value" in ""|YOUR_*|your_*|123456*) die "$key is not configured. Fill it in in config.env (or directly in .env) and rerun ./deploy.vps.";; esac
 done
 
 # Compose service networking must use service names, not localhost.

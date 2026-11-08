@@ -27,14 +27,17 @@ Telegram bot and FastAPI web application for creating direct download and browse
 ## VPS deployment
 
 1. Extract this project on the VPS and enter the project directory.
-2. Create the environment file:
+2. Fill in your credentials in `config.env` (API_ID, API_HASH, BOT_TOKEN, OWNER_ID, BASE_URL, etc.):
 
    ```bash
-   cp .env.example .env
-   nano .env
+   nano config.env
    ```
 
-3. Set `API_ID`, `API_HASH`, `BOT_TOKEN`, `OWNER_ID`, and `BASE_URL`. Keep `MONGODB_URI=mongodb://mongodb:27017` and `DATABASE_NAME=tg_media_bot` when using the bundled Compose database. Configure `ADMINS` as comma-separated Telegram numeric IDs if needed.
+   `config.env` is a short, dedicated place to fill in just your credentials. You don't need to touch `.env` by hand — `./deploy.vps` reads `config.env` and writes any filled-in values into `.env` for you each time it runs (creating `.env` from `.env.example` first if it doesn't exist yet). Leaving a field blank in `config.env` leaves the existing `.env` value untouched. If you'd rather edit `.env` directly instead, that still works too: `cp .env.example .env && nano .env`.
+
+   If you don't have `BASE_URL` yet, leave it blank for now — see [Get a public HTTPS URL with Cloudflare Tunnel](#get-a-public-https-url-with-cloudflare-tunnel) below, or set it later with the bot's `/baseurl` command once it's running.
+
+3. Keep `MONGODB_URI=mongodb://mongodb:27017` and `DATABASE_NAME=tg_media_bot` when using the bundled Compose database. Configure `ADMINS` as comma-separated Telegram numeric IDs if needed.
 4. Start the stack:
 
    ```bash
@@ -94,6 +97,59 @@ The base URL is stored in MongoDB and loaded at application startup. Newly gener
 ## Reverse proxy
 
 Put the app behind Nginx, Caddy or another TLS reverse proxy. Forward requests to `127.0.0.1:8000`, preserve the `Range` and `Host` headers, and allow long-lived streaming responses. Do not buffer large streaming responses at the proxy.
+
+## Get a public HTTPS URL with Cloudflare Tunnel
+
+If you don't have a domain yet, or just want a quick HTTPS URL to put in `BASE_URL` for testing, [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (`cloudflared`) can expose the local service without any DNS setup or open ports.
+
+**Quick tunnel (fastest, temporary URL):**
+
+1. Install `cloudflared` on the VPS:
+
+   ```bash
+   curl -fsSL https://pkg.cloudflare.com/cloudflared-ascii.sh | sudo bash 2>/dev/null; \
+   sudo apt-get update -qq && sudo apt-get install -y cloudflared
+   ```
+
+   (See [Cloudflare's install docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) if your distro isn't Debian/Ubuntu-based.)
+
+2. With the stack already running (`./deploy.vps`), start a quick tunnel pointed at the app's port:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+3. `cloudflared` prints a random URL that looks like `https://random-words-1234.trycloudflare.com`. That's your public HTTPS URL.
+4. Set it as `BASE_URL` — either update `config.env`/`.env` and rerun `./deploy.vps`, or just send `/baseurl https://random-words-1234.trycloudflare.com` to the bot (no restart needed; see [Bot commands](#bot-commands)).
+
+Quick tunnels are meant for testing: the URL changes every time you restart `cloudflared`, and there's no uptime guarantee. Keep the `cloudflared tunnel --url ...` command running (e.g. in `tmux`, `screen`, or as a `systemd` service) for as long as you want the URL to stay valid.
+
+**Named tunnel (stable URL tied to your own domain):**
+
+If you own a domain on Cloudflare and want a URL that doesn't change:
+
+1. Authenticate and create a named tunnel:
+
+   ```bash
+   cloudflared tunnel login
+   cloudflared tunnel create file2link
+   ```
+
+2. Route a hostname on your domain to it:
+
+   ```bash
+   cloudflared tunnel route dns file2link stream.yourdomain.com
+   ```
+
+3. Run it pointed at the app:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8000 run file2link
+   ```
+
+4. Set `BASE_URL=https://stream.yourdomain.com` and rerun `./deploy.vps` (or set it via `/baseurl`).
+
+Either way, Cloudflare terminates TLS and proxies to the VPS, so you don't need Nginx/Caddy or a separate certificate for this path — only use the [Reverse proxy](#reverse-proxy) section above if you're not using Cloudflare Tunnel.
 
 ## Maintenance
 
