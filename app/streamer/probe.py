@@ -58,14 +58,17 @@ async def probe_tracks(client, file, file_size: int) -> dict:
                     if downloaded >= probe_size:
                         break
         except Exception as dl_err:
-            logger.warning(f"iter_download failed ({type(dl_err).__name__}: {dl_err}), trying download_media fallback")
-            # Method 2: Fallback - download full file to temp path
+            # Never fall back to downloading an entire large movie just to inspect tracks.
+            # Full-file fallback is only acceptable when the source itself is probe-sized.
+            logger.warning("iter_download probe failed (%s: %s)", type(dl_err).__name__, dl_err)
+            if file_size > PROBE_DOWNLOAD_SIZE:
+                raise RuntimeError("Unable to read media header; full-file fallback intentionally skipped") from dl_err
             downloaded = 0
             result = await client.download_media(file, file=temp_path)
             if result and os.path.exists(temp_path):
-                downloaded = os.path.getsize(temp_path)
+                downloaded = min(os.path.getsize(temp_path), PROBE_DOWNLOAD_SIZE)
             else:
-                raise RuntimeError(f"download_media also failed, returned: {result}")
+                raise RuntimeError(f"download_media fallback failed, returned: {result}")
         
         logger.info(f"Downloaded {downloaded / 1024:.0f}KB for probing")
         

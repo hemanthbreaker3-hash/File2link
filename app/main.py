@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
-from app.database.connection import settings, files_col, create_indexes, load_custom_settings
+from app.database.connection import settings, files_col, client as mongo_client, create_indexes, load_custom_settings
 from app.streamer.manager import session_manager
 from app.streamer.engine import get_streaming_response, get_remux_response
 from app.streamer.probe import probe_tracks
@@ -15,6 +15,7 @@ import asyncio
 import logging
 import sys
 import datetime
+from pathlib import Path
 
 # Configure Windows Event Loop Policy for subprocess support
 if sys.platform == 'win32':
@@ -29,17 +30,20 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    await create_indexes()
-    await load_custom_settings()
-    await session_manager.start()
-    register_handlers(session_manager.bot_client)
-    logger.info("Application started")
-    yield
-    # Shutdown logic
-    await session_manager.stop()
-    logger.info("Application stopped")
+    try:
+        await mongo_client.admin.command("ping")
+        await create_indexes()
+        await load_custom_settings()
+        await session_manager.start()
+        register_handlers(session_manager.bot_client)
+        logger.info("HITLER service started")
+        yield
+    finally:
+        await session_manager.stop()
+        mongo_client.close()
+        logger.info("HITLER service stopped")
 
-app = FastAPI(title="Telegram Direct Media Link Generator", lifespan=lifespan)
+app = FastAPI(title="HITLER Media Link Service", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
@@ -48,7 +52,7 @@ app.include_router(admin_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,12 +61,13 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Mount Static Files & Templates
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+APP_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "anizoneflix"}
+    return {"status": "ok", "service": "HITLER"}
 
 @app.get("/")
 async def index(request: Request):
@@ -71,7 +76,7 @@ async def index(request: Request):
 @app.get("/watch/{short_code}")
 async def watch_page(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
     return templates.TemplateResponse("watch.html", {
@@ -94,7 +99,9 @@ async def stream_file(request: Request, short_code: str):
 
     # Use all available clients for ultra-high-speed downloads
     clients = session_manager.get_all_clients()
-    client = clients[0]  # Use first client for initial message fetch
+    if not clients:
+        raise HTTPException(status_code=503, detail="Telegram sessions are unavailable")
+    client = session_manager.get_client()
     
     try:
         # Fetch the message that contains the media
@@ -109,17 +116,20 @@ async def stream_file(request: Request, short_code: str):
         elif hasattr(file, 'photo'):
             file = file.photo
             
-    except Exception as e:
-        logger.error(f"Error fetching file: {e}")
-        raise HTTPException(status_code=500, detail="Error retrieving file from Telegram")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error fetching Telegram media")
+        raise HTTPException(status_code=502, detail="Unable to retrieve media from Telegram")
 
     return await get_streaming_response(
-        clients,  # Pass ALL clients for parallel downloading
+        [client],  # Keep the media reference bound to the session that fetched it.
         file=file,
         file_size=file_data['file_size'],
         filename=file_data['filename'],
         mime_type=file_data['mime_type'],
-        request=request
+        request=request,
+        chunk_size=settings.STREAM_CHUNK_SIZE,
     )
 
 
@@ -129,8 +139,8 @@ async def stream_file(request: Request, short_code: str):
 async def get_tracks(short_code: str):
     """Return available audio/video/subtitle tracks for a media file."""
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
-        raise HTTPException(status_code=404, detail="File not found")
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
+        raise HTTPException(status_code=404, detail="File not found or expired")
     
     # Check if tracks are already cached in the database (and not an error result)
     cached = file_data.get('tracks_info')
@@ -187,8 +197,10 @@ async def remux_file(request: Request, short_code: str, audio: int = 0):
         audio: Audio track index (0-based, default 0)
     """
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
-        raise HTTPException(status_code=404, detail="File not found")
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
+        raise HTTPException(status_code=404, detail="File not found or expired")
+    if audio < 0 or audio > 32:
+        raise HTTPException(status_code=400, detail="Invalid audio track")
     
     # Use a single client for sequential download (FFmpeg needs sequential input)
     client = session_manager.get_client()
@@ -224,4 +236,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     # use loop="asyncio" to prevent Uvicorn from forcing SelectorEventLoop on Windows,
     # which causes NotImplementedError with asyncio.create_subprocess_exec
-    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True, loop="asyncio")
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False, loop="asyncio")

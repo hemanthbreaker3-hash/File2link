@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-APP="ANIZONEFLIX"
+APP="HITLER"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 info(){ echo -e "${GREEN}[${APP}]${NC} $*"; }
 warn(){ echo -e "${YELLOW}[WARN]${NC} $*"; }
@@ -50,13 +50,13 @@ if grep -qE '^REDIS_URL=(redis://)?(localhost|127\.0\.0\.1)' .env; then
   rm -f .env.bak
 fi
 
-info "Building and starting ANIZONEFLIX..."
+info "Building and starting HITLER..."
 $COMPOSE up -d --build --remove-orphans
 
 info "Waiting for health endpoint..."
 for i in $(seq 1 30); do
   if curl -fsS "http://127.0.0.1:${PORT:-8000}/health" >/dev/null 2>&1; then
-    info "ANIZONEFLIX is healthy on port ${PORT:-8000}."
+    info "HITLER is healthy on port ${PORT:-8000}."
     $COMPOSE ps
     exit 0
   fi

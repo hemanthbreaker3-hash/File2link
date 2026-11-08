@@ -9,7 +9,8 @@ services:
     env_file:
       - .env
     environment:
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/tg_media_bot}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017}
+      DATABASE_NAME: ${DATABASE_NAME:-tg_media_bot}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PORT: ${PORT:-8000}
     depends_on:

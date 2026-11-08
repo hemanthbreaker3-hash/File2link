@@ -1,7 +1,7 @@
 {
-  "name": "anizoneflix-proxy",
+  "name": "hitler-proxy",
   "version": "1.0.0",
-  "description": "ANIZONEFLIX deployment proxy",
+  "description": "HITLER deployment proxy",
   "main": "functions/proxy.js",
   "dependencies": {}
 }

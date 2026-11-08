@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ file.filename }} · ANIZONEFLIX{% endblock %}
+{% block title %}{{ file.filename }} · HITLER{% endblock %}
 {% block head %}
 <style>
   .player-box{background:#000;border:1px solid var(--line);border-radius:14px;overflow:hidden}
-  video{display:block;width:100%;max-height:72vh;background:#000;aspect-ratio:16/9}
+  video{display:block;width:100%;max-height:72vh;background:#000;aspect-ratio:16/9;touch-action:pan-x}
   .info{padding:16px}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;color:var(--muted);font-size:13px}
   .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.select{background:#1b1b22;color:#fff;border:1px solid var(--line);border-radius:9px;padding:10px;max-width:100%}
   .player-panel{display:none}.player-panel.active{display:block}
@@ -12,6 +12,9 @@
   .pbtn:hover{border-color:#555565}.copy-ok{font-size:12px;color:#69e69a;min-height:18px}
   .player-tabs{position:fixed;z-index:30;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(94vw,520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:5px;background:#15151b;border:1px solid #30303a;border-radius:14px;box-shadow:0 8px 28px #000}
   .tab{border:0;background:transparent;color:#9d9da8;padding:9px 4px;border-radius:9px;font-size:12px;cursor:pointer}.tab.active{background:#272730;color:#fff}
+  .volume-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;font-size:13px}.volume-tools input{flex:1;min-width:130px;accent-color:var(--accent)}
+  .gesture-hint{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:space-between;padding:0 8%;opacity:0;transition:opacity .15s;font-size:12px;color:#fff;text-shadow:0 1px 5px #000}
+  .gesture-hint.show{opacity:1}.player-box{position:relative;touch-action:pan-x}.gesture-hint span{background:#0009;border:1px solid #ffffff30;border-radius:20px;padding:8px 11px}
   .notice{padding:10px 12px;border-radius:9px;background:#1a1820;color:#bbb;font-size:12px;margin-top:10px}
   @media(min-width:900px){.watch-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}.side{align-self:start;position:sticky;top:72px}}
 </style>
@@ -20,10 +23,11 @@
 <div class="watch-grid">
   <section>
     <div class="player-box">
-      <video id="player" controls playsinline preload="metadata">
+      <video id="player" controls playsinline preload="metadata" crossorigin="anonymous">
         <source id="video-source" src="/stream/{{ file.short_code }}" type="{{ file.mime_type }}">
         Your browser cannot play this media.
       </video>
+      <div class="gesture-hint" id="gesture-hint" aria-live="polite"><span id="brightness-label">Brightness 100%</span><span id="volume-label">Volume 100%</span></div>
     </div>
     <div class="card info" style="margin-top:10px">
       <div style="font-weight:700;word-break:break-word">{{ file.filename }}</div>
@@ -32,6 +36,13 @@
         <select id="audio-select" class="select" aria-label="Audio track"></select>
         <span id="track-status" class="muted" style="align-self:center;font-size:12px"></span>
       </div>
+      <div class="volume-tools">
+        <label for="volume-boost">Volume boost <b id="volume-value">100%</b></label>
+        <input id="volume-boost" type="range" min="100" max="300" step="10" value="100" aria-label="Volume boost up to 300 percent">
+        <label for="brightness">Brightness <b id="brightness-value">100%</b></label>
+        <input id="brightness" type="range" min="50" max="150" step="5" value="100" aria-label="Screen brightness">
+      </div>
+      <p class="muted" style="font-size:11px;margin:6px 0 0">Touch gestures: swipe up/down on the right for volume and on the left for brightness. Boost is browser playback only; external players use their own audio controls.</p>
       <div class="tools">
         <a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>
         <button class="btn" type="button" onclick="copyStream()">Copy stream URL</button>
@@ -43,7 +54,7 @@
   <aside class="side">
     <div class="card" style="padding:14px">
       <b>Open in player</b>
-      <p class="muted" style="font-size:12px;margin:5px 0 12px">Choose a device type below. Android buttons use explicit VIEW intents; desktop links use installed-player protocols.</p>
+      <p class="muted" style="font-size:12px;margin:5px 0 12px">Android buttons use explicit VIEW intents. On desktop or TV, copy the URL into your player’s Open Network Stream option.</p>
       <div id="mobile" class="player-panel active"><div class="player-grid" id="mobile-grid"></div></div>
       <div id="desktop" class="player-panel"><div class="player-grid" id="desktop-grid"></div></div>
       <div id="tablet" class="player-panel"><div class="player-grid" id="tablet-grid"></div></div>
@@ -63,11 +74,14 @@
 <script>
 const STREAM_URL = new URL('/stream/{{ file.short_code }}', window.location.origin).href;
 const REMUX_URL = new URL('/remux/{{ file.short_code }}', window.location.origin).href;
+const PLAYER_MIME = {{ file.mime_type|tojson }};
+const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
 const player = document.getElementById('player');
 
-function androidIntent(url, pkg) {
+function androidIntent(url, pkg, mime) {
   const u = new URL(url);
-  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${u.protocol.replace(':','')};action=android.intent.action.VIEW;type=video/*;package=${pkg};end`;
+  const scheme = u.protocol.replace(':','');
+  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${scheme};action=android.intent.action.VIEW;type=${mime || 'video/*'};package=${pkg};S.browser_fallback_url=${encodeURIComponent(url)};end`;
 }
 function addPlayer(gridId, label, href) {
   const a=document.createElement('a'); a.className='pbtn'; a.textContent=label; a.href=href;
@@ -82,21 +96,19 @@ const android = [
   ['mpv', 'is.xyz.mpv'],
   ['Kodi', 'org.xbmc.kodi']
 ];
-android.forEach(([n,p]) => addPlayer('mobile-grid', n, androidIntent(STREAM_URL,p)));
+android.forEach(([n,p]) => addPlayer('mobile-grid', n, androidIntent(STREAM_URL,p, INTENT_MIME)));
 addPlayer('mobile-grid','Copy URL', '#');
-addPlayer('tablet-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc'));
-addPlayer('tablet-grid','MX Player', androidIntent(STREAM_URL,'com.mxtech.videoplayer.ad'));
-addPlayer('tablet-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player'));
-addPlayer('tablet-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi'));
+addPlayer('tablet-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc',INTENT_MIME));
+addPlayer('tablet-grid','MX Player', androidIntent(STREAM_URL,'com.mxtech.videoplayer.ad',INTENT_MIME));
+addPlayer('tablet-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player',INTENT_MIME));
+addPlayer('tablet-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi',INTENT_MIME));
 
-addPlayer('desktop-grid','VLC', 'vlc://' + STREAM_URL);
-addPlayer('desktop-grid','PotPlayer', 'potplayer://' + STREAM_URL);
-addPlayer('desktop-grid','Open URL', STREAM_URL);
+addPlayer('desktop-grid','Open stream URL', STREAM_URL);
 addPlayer('desktop-grid','Copy URL', '#');
 
-addPlayer('tv-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc'));
-addPlayer('tv-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi'));
-addPlayer('tv-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player'));
+addPlayer('tv-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc',INTENT_MIME));
+addPlayer('tv-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi',INTENT_MIME));
+addPlayer('tv-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player',INTENT_MIME));
 addPlayer('tv-grid','Open URL', STREAM_URL);
 
 document.querySelectorAll('.pbtn[href="#"]').forEach(b=>b.addEventListener('click', e=>{e.preventDefault();copyStream()}));
@@ -133,6 +145,75 @@ async function switchAudio(index){
   try{await player.play();}catch(e){}
   player.addEventListener('loadedmetadata',()=>{try{player.currentTime=time}catch(e){};if(wasPlaying)player.play().catch(()=>{});document.getElementById('track-status').textContent='Selected audio';},{once:true});
 }
+// Browser-side amplification: native media volume remains available as the base level.
+let audioContext, gainNode, compressor, boost = 1, brightness = 1;
+const boostInput = document.getElementById('volume-boost');
+const brightnessInput = document.getElementById('brightness');
+const gestureHint = document.getElementById('gesture-hint');
+let hintTimer;
+function showGesture(text, side) {
+  document.getElementById(side === 'left' ? 'brightness-label' : 'volume-label').textContent = text;
+  gestureHint.classList.add('show'); clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => gestureHint.classList.remove('show'), 850);
+}
+async function setupAudioBoost() {
+  if (audioContext) { if (audioContext.state === 'suspended') await audioContext.resume(); return; }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) throw new Error('Web Audio unavailable');
+    audioContext = new Ctx();
+    const source = audioContext.createMediaElementSource(player);
+    gainNode = audioContext.createGain();
+    compressor = audioContext.createDynamicsCompressor();
+    compressor.threshold.value = -8; compressor.knee.value = 18;
+    compressor.ratio.value = 8; compressor.attack.value = 0.003; compressor.release.value = 0.22;
+    source.connect(gainNode); gainNode.connect(compressor); compressor.connect(audioContext.destination);
+    await audioContext.resume(); updateGain();
+  } catch (err) { console.warn('Volume boost unavailable in this browser', err); }
+}
+function updateGain() {
+  const base = Number(player.volume);
+  if (gainNode && audioContext) gainNode.gain.setTargetAtTime(boost * base, audioContext.currentTime, 0.04);
+  document.getElementById('volume-value').textContent = `${Math.round(boost * 100)}%`;
+  document.getElementById('volume-label').textContent = `Volume ${Math.round(boost * 100)}%`;
+}
+function updateBrightness() {
+  player.style.filter = `brightness(${brightness})`;
+  document.getElementById('brightness-value').textContent = `${Math.round(brightness * 100)}%`;
+  document.getElementById('brightness-label').textContent = `Brightness ${Math.round(brightness * 100)}%`;
+}
+boostInput.addEventListener('input', async () => { await setupAudioBoost(); boost = Number(boostInput.value) / 100; updateGain(); });
+brightnessInput.addEventListener('input', () => { brightness = Number(brightnessInput.value) / 100; updateBrightness(); });
+player.addEventListener('volumechange', updateGain);
+player.addEventListener('play', setupAudioBoost, {once:true});
+
+let gestureStart = null;
+player.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  const bounds = player.getBoundingClientRect();
+  if (e.clientY > bounds.bottom - 48) return;
+  const rect = player.getBoundingClientRect();
+  gestureStart = {x:e.clientX, y:e.clientY, side:e.clientX < rect.left + rect.width / 2 ? 'left' : 'right'};
+}, {passive:true});
+player.addEventListener('pointerup', async e => {
+  if (!gestureStart || e.pointerType !== 'touch') return;
+  const dx = e.clientX - gestureStart.x, dy = e.clientY - gestureStart.y;
+  const side = gestureStart.side; gestureStart = null;
+  if (Math.abs(dy) < 28 || Math.abs(dy) < Math.abs(dx) * 1.2) return;
+  const delta = dy < 0 ? 10 : -10;
+  if (side === 'right') {
+    await setupAudioBoost();
+    boost = Math.max(1, Math.min(3, boost + delta / 100));
+    boostInput.value = String(Math.round(boost * 100)); updateGain();
+    showGesture(`Volume ${Math.round(boost * 100)}%`, 'right');
+  } else {
+    brightness = Math.max(0.5, Math.min(1.5, brightness + delta / 100));
+    brightnessInput.value = String(Math.round(brightness * 100)); updateBrightness();
+    showGesture(`Brightness ${Math.round(brightness * 100)}%`, 'left');
+  }
+}, {passive:true});
+player.addEventListener('pointercancel', () => { gestureStart = null; }, {passive:true});
+updateBrightness(); updateGain();
 loadTracks();
 </script>
 {% endblock %}

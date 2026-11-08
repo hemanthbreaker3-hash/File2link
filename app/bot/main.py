@@ -6,7 +6,9 @@ from app.utils.helpers import generate_short_code, format_bytes
 from app.utils.fsub import is_user_fsubbed
 from app.utils.rate_limit import check_rate_limit
 import datetime
+import mimetypes
 import logging
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +143,9 @@ def register_handlers(bot):
             doc = media.document
             file_name = next((attr.file_name for attr in doc.attributes if hasattr(attr, 'file_name')), "file")
             file_size = doc.size
-            mime_type = doc.mime_type
+            mime_type = doc.mime_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+            if mime_type == "application/octet-stream":
+                mime_type = mimetypes.guess_type(file_name)[0] or mime_type
             file_id = f"{doc.id}_{doc.access_hash}"
         elif hasattr(media, 'photo'):
             photo = media.photo
@@ -261,7 +265,7 @@ def register_handlers(bot):
             await event.answer("🚫 You are not authorized to delete this link.", alert=True)
 
     # Admin Commands
-    @bot.on(events.NewMessage(pattern='/baseurl'))
+    @bot.on(events.NewMessage(pattern=r'^/baseurl(?:@\w+)?(?:\s|$)'))
     async def baseurl_handler(event):
         sender = await event.get_sender()
         if not sender or getattr(sender, 'bot', False):
@@ -285,6 +289,9 @@ def register_handlers(bot):
         new_url = args[1].strip().rstrip('/')
         if not new_url.startswith(('http://', 'https://')):
             new_url = f"https://{new_url}"
+        parsed = urlparse(new_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            return await event.reply("❌ Invalid URL. Use a public URL such as `/baseurl https://example.com`.")
 
         try:
             await settings_col.update_one(
