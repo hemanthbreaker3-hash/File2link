@@ -14,7 +14,7 @@ RUN python -m pip install --upgrade pip && python -m pip install -r /app/require
 
 COPY . /app
 
-RUN mkdir -p /app/app/static && python -m compileall -q /app/app
+RUN mkdir -p /app/app/static /app/sessions && python -m compileall -q /app/app
 
 EXPOSE 8000
 

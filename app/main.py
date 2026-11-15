@@ -15,6 +15,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 import datetime
 from pathlib import Path
 
@@ -37,7 +38,12 @@ async def lifespan(app: FastAPI):
         await load_custom_settings()
         session_manager.prepare_bot()
         register_handlers(session_manager.bot_client)
-        await session_manager.start()
+        # Run Telegram auth in the background instead of awaiting it here.
+        # If it's mid-FloodWait, awaiting it would block (and the healthcheck
+        # would fail and Docker would restart us, which only makes the wait
+        # longer). The HTTP server comes up immediately either way; /health
+        # reports whether Telegram is still connecting.
+        session_manager._retry_task = asyncio.create_task(session_manager.start_with_retry())
         if getattr(settings, "BASE_URL", None):
             os.environ["BASE_URL"] = str(settings.BASE_URL).rstrip("/")
         logger.info("HITLER service started (wzgram)")
@@ -71,7 +77,21 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "HITLER"}
+    # Always 200: the HTTP server itself is up even while Telegram auth is
+    # still retrying/waiting out a FloodWait in the background. Keeping this
+    # healthy prevents Docker from restarting the container mid-wait, which
+    # is what previously kept re-triggering auth.ImportBotAuthorization.
+    return {
+        "status": "ok",
+        "service": "HITLER",
+        "telegram_ready": session_manager.telegram_ready,
+        "telegram_last_error": session_manager.last_error,
+        "telegram_flood_wait_remaining_s": (
+            max(0, int(session_manager.flood_wait_until - time.time()))
+            if session_manager.flood_wait_until
+            else None
+        ),
+    }
 
 @app.get("/")
 async def index(request: Request):
