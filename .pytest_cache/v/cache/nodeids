@@ -1,4 +1,6 @@
 [
+  "tests/test_probe.py::ProbeParsingTests::test_detects_multiple_audio_tracks_and_labels",
+  "tests/test_probe.py::ProbeParsingTests::test_video_without_audio",
   "tests/test_public_url.py::test_normalizes_public_base_url",
   "tests/test_public_url.py::test_rejects_localhost",
   "tests/test_public_url.py::test_rejects_missing_scheme",

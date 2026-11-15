@@ -222,7 +222,11 @@ def register_handlers(bot):
 
         if links_ready:
             download_url = f"{base_url}/dl/{short_code}"
-            stream_url = f"{base_url}/watch/{short_code}"
+            archive_exts = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".iso", ".cab", ".zst"}
+            is_archive = os.path.splitext(file_name)[1].lower() in archive_exts
+            if is_archive:
+                await files_col.update_one({"short_code": short_code}, {"$set": {"is_archive": True}})
+            stream_url = f"{base_url}/stream/{short_code}"
             caption = (
                 "💎 <b>Media Links Generated</b>\n\n"
                 f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
@@ -230,22 +234,17 @@ def register_handlers(bot):
                 f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
                 "🚀 <b>Fast Links</b>\n"
                 f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>\n"
-                f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n\n"
-                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+                + ("" if is_archive else f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n")
+                + f"\n📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
             )
-            user_buttons = _kb([
-                [
-                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
-                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
-                ],
+            media_row = [InlineKeyboardButton("⚡ Direct Download", url=download_url)]
+            if not is_archive:
+                media_row.append(InlineKeyboardButton("🍿 Watch Online", url=stream_url))
+            user_buttons = _kb([media_row,
                 [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
                 [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")],
             ])
-            channel_buttons = _kb([
-                [
-                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
-                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
-                ],
+            channel_buttons = _kb([media_row,
                 [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
             ])
         else:
@@ -293,6 +292,65 @@ def register_handlers(bot):
                 )
             except Exception as e:
                 logger.exception("Error mirroring to log channel: %s", e)
+
+
+    @bot.on_message(filters.private & filters.text & ~filters.command(["start", "ss", "sv", "mi", "stats", "broadcast", "ban", "unban", "autodel", "baseurl"]))
+    async def direct_url_handler(client, message: Message):
+        """Create File2link URLs from an existing direct HTTP(S) download URL."""
+        user = message.from_user
+        raw_url = (message.text or "").strip()
+        if not user or user.is_bot or not raw_url.lower().startswith(("http://", "https://")):
+            return
+        if not await check_rate_limit(user.id):
+            return await message.reply("⏳ **Rate Limit Exceeded**\\n\\n> Please wait a few seconds.")
+        if not await is_user_fsubbed(client, user.id):
+            return await message.reply(
+                "🔒 **Access Restricted**\\n\\n> Join our official updates channel first.",
+                reply_markup=_kb([[InlineKeyboardButton("📢 Join Updates Channel", url=settings.UPDATE_CHANNEL_URL)]]),
+            )
+        from urllib.parse import urlparse, unquote, parse_qs
+        from app.utils.mediainfo_fmt import validate_download_url
+        try:
+            await validate_download_url(raw_url)
+        except Exception as exc:
+            return await message.reply(f"❌ **Invalid download URL:** `{html.escape(str(exc))}`")
+
+        parsed = urlparse(raw_url)
+        query_name = (parse_qs(parsed.query).get("filename") or parse_qs(parsed.query).get("name") or [""])[0]
+        filename = unquote(os.path.basename(parsed.path)) or unquote(os.path.basename(query_name)) or "download"
+        filename = filename.replace("\\r", " ").replace("\\n", " ")[:180]
+        ext = os.path.splitext(filename)[1].lower()
+        archive_exts = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".iso", ".cab", ".zst"}
+        is_archive = ext in archive_exts
+        mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        short_code = generate_short_code()
+        expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=settings.DEFAULT_EXPIRY) if settings.DEFAULT_EXPIRY > 0 else None
+        await files_col.insert_one({
+            "file_id": "", "file_unique_id": short_code, "filename": filename,
+            "mime_type": mime_type, "file_size": 0, "uploader_id": user.id,
+            "created_at": datetime.datetime.utcnow(), "expiry_time": expiry,
+            "access_count": 0, "short_code": short_code, "chat_id": 0, "message_id": 0,
+            "external_url": raw_url, "is_archive": is_archive,
+        })
+        try:
+            base_url = normalize_public_base_url(settings.BASE_URL)
+        except ValueError as exc:
+            await files_col.delete_one({"short_code": short_code})
+            return await message.reply(f"⚠️ **Set a public Base URL first:** `{html.escape(str(exc))}`")
+        download_url = f"{base_url}/dl/{short_code}"
+        stream_url = f"{base_url}/stream/{short_code}"
+        caption = (
+            "💎 <b>Download URL Converted Successfully</b>\\n\\n"
+            f"📂 <b>File Name:</b> <code>{html.escape(filename)}</code>\\n"
+            f"⚙️ <b>Type:</b> <code>{'Archive' if is_archive else html.escape(mime_type)}</code>\\n\\n"
+            f'⬇️ <a href="{html.escape(download_url, quote=True)}">Direct Download</a>'
+        )
+        rows = [[InlineKeyboardButton("⬇️ Direct Download", url=download_url)]]
+        if not is_archive:
+            caption += f'\n▶️ <a href="{html.escape(stream_url, quote=True)}">Watch / Stream</a>'
+            rows.append([InlineKeyboardButton("▶️ Watch Online", url=stream_url)])
+        rows.append([InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")])
+        await message.reply(caption, parse_mode=ParseMode.HTML, reply_markup=_kb(rows))
 
     @bot.on_callback_query(filters.regex(r"^del_"))
     async def delete_callback(client, callback: CallbackQuery):

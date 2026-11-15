@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from app.database.connection import settings, files_col, client as mongo_client, create_indexes, load_custom_settings
 from app.streamer.manager import session_manager
 from app.streamer.engine import get_streaming_response, get_remux_response
@@ -83,6 +83,11 @@ async def watch_page(request: Request, short_code: str):
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
+    if file_data.get("is_archive"):
+        raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
+    if file_data.get("external_url"):
+        return RedirectResponse(file_data["external_url"], status_code=302)
+
     return templates.TemplateResponse(
         request=request,
         name="watch.html",
@@ -104,6 +109,16 @@ async def stream_file(request: Request, short_code: str):
         raise HTTPException(status_code=404, detail="Link expired")
 
     await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
+
+    if file_data.get("external_url"):
+        if request.url.path.startswith("/dl/"):
+            return RedirectResponse(file_data["external_url"], status_code=302)
+        if file_data.get("is_archive"):
+            raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
+        return RedirectResponse(file_data["external_url"], status_code=302)
+
+    if request.url.path.startswith(("/stream/", "/watch/")) and file_data.get("is_archive"):
+        raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
 
     all_clients = session_manager.get_all_clients()
     if not all_clients:
