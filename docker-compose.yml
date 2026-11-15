@@ -9,27 +9,19 @@ services:
     env_file:
       - .env
     environment:
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017}
-      DATABASE_NAME: ${DATABASE_NAME:-tg_media_bot}
+      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env}
+      DATABASE_NAME: ${DATABASE_NAME:-file2link}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       PORT: ${PORT:-8000}
     depends_on:
-      mongodb:
-        condition: service_healthy
       redis:
         condition: service_healthy
-
-  mongodb:
-    image: mongo:8
-    restart: unless-stopped
-    volumes:
-      - mongodb_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1"]
-      interval: 10s
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PORT:-8000}/health || exit 1"]
+      interval: 20s
       timeout: 5s
-      retries: 10
-      start_period: 20s
+      retries: 5
+      start_period: 40s
 
   redis:
     image: redis:7-alpine
@@ -44,5 +36,4 @@ services:
       retries: 10
 
 volumes:
-  mongodb_data:
   redis_data:

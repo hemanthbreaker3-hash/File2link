@@ -1,163 +1,174 @@
 #!/usr/bin/env bash
-# File2link VPS deployment. Supports credentials exported in the current shell,
-# config.env, or .env. Precedence: exported shell > config.env > existing .env.
+# Robust File2link VPS deployment. Run from the repository root.
 set -Eeuo pipefail
+IFS=$'\n\t'
 
 APP_NAME="File2link"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 info(){ printf "${GREEN}[%s]${NC} %s\n" "$APP_NAME" "$*"; }
 warn(){ printf "${YELLOW}[WARN]${NC} %s\n" "$*"; }
 die(){ printf "${RED}[ERROR]${NC} %s\n" "$*" >&2; exit 1; }
-sudo_cmd(){ if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+run_root(){ if [ "$(id -u)" -eq 0 ]; then "$@"; elif command -v sudo >/dev/null 2>&1; then sudo "$@"; else die "Root privileges are required. Run as root or install sudo."; fi; }
 
-[ -f docker-compose.yml ] || die "Run this script from the project root (docker-compose.yml not found)."
-[ -f Dockerfile ] || die "Dockerfile is missing."
-[ -f deploy.vps ] || die "deploy.vps is missing."
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+[[ -f docker-compose.yml && -f Dockerfile && -f requirements.txt ]] || die "Run from the File2link project root; docker-compose.yml, Dockerfile and requirements.txt must exist."
+command -v python3 >/dev/null 2>&1 || die "Python 3 is required to validate and write the environment file."
 
-# Install basic host prerequisites only when needed.
+# Host prerequisites.
 if ! command -v curl >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
-    sudo_cmd apt-get update -qq
-    sudo_cmd apt-get install -y -qq curl ca-certificates
+    run_root apt-get update -qq
+    run_root apt-get install -y -qq curl ca-certificates
   elif command -v dnf >/dev/null 2>&1; then
-    sudo_cmd dnf install -y curl ca-certificates
+    run_root dnf install -y curl ca-certificates
   else
-    die "curl is required; install it and rerun."
+    die "curl is missing. Install curl and ca-certificates, then rerun."
   fi
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-  info "Installing Docker Engine..."
-  curl -fsSL https://get.docker.com | sudo_cmd sh
+  info "Installing Docker Engine and Compose plugin..."
+  curl -fsSL https://get.docker.com -o /tmp/file2link-get-docker.sh || die "Could not download Docker installer. Check VPS DNS/network access."
+  run_root sh /tmp/file2link-get-docker.sh
+  rm -f /tmp/file2link-get-docker.sh
 fi
-sudo_cmd systemctl enable --now docker 2>/dev/null || true
+run_root systemctl enable --now docker || die "Docker service could not be started. Check: sudo systemctl status docker --no-pager"
 
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE=(docker compose)
+# Prefer unprivileged Docker; use sudo for the whole Docker/Compose invocation
+# when this SSH session has not refreshed docker-group membership.
+DOCKER=(docker)
+if ! docker info >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1 && sudo docker info >/dev/null 2>&1; then
+    DOCKER=(sudo docker)
+    warn "Using sudo for Docker because this login session lacks Docker socket permission."
+  else
+    die "Docker daemon is not accessible. Check 'sudo systemctl status docker' and 'sudo docker info'. Do not chmod 666 the Docker socket."
+  fi
+fi
+
+if "${DOCKER[@]}" compose version >/dev/null 2>&1; then
+  COMPOSE=("${DOCKER[@]}" compose)
 elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE=(docker-compose)
+  if [[ "${DOCKER[0]}" == sudo ]]; then COMPOSE=(sudo docker-compose); else COMPOSE=(docker-compose); fi
 else
-  die "Docker Compose is unavailable. Install the Docker Compose plugin and rerun."
+  warn "Docker Compose plugin missing; attempting package installation..."
+  if command -v apt-get >/dev/null 2>&1; then
+    run_root apt-get update -qq
+    run_root apt-get install -y docker-compose-plugin
+  elif command -v dnf >/dev/null 2>&1; then
+    run_root dnf install -y docker-compose-plugin
+  fi
+  if "${DOCKER[@]}" compose version >/dev/null 2>&1; then COMPOSE=("${DOCKER[@]}" compose); else die "Docker Compose is unavailable. Install the Docker Compose plugin and rerun."; fi
 fi
 
-[ -f .env ] || { [ -f .env.example ] || die ".env.example is missing."; cp .env.example .env; }
-
-# Merge config.env and current exported shell variables into .env without
-# evaluating shell code or breaking values containing #, spaces, or URI chars.
-command -v python3 >/dev/null 2>&1 || die "python3 is required to prepare .env."
+# Build .env without sourcing/evaluating user-controlled shell text.
+if [[ ! -f .env ]]; then
+  [[ -f .env.example ]] || die ".env.example is missing."
+  cp .env.example .env
+fi
 python3 - <<'PY'
 import json, os, pathlib, re
 p = pathlib.Path('.env')
-values = {}
 
 def read_env(path):
-    if not path.exists():
-        return {}
-    out = {}
+    if not path.exists(): return {}
+    result = {}
     for raw in path.read_text().splitlines():
         line = raw.strip()
-        if not line or line.startswith('#'):
-            continue
-        if line.startswith('export '):
-            line = line[7:].lstrip()
-        if '=' not in line:
-            continue
+        if not line or line.startswith('#'): continue
+        if line.startswith('export '): line = line[7:].lstrip()
+        if '=' not in line: continue
         key, value = line.split('=', 1)
-        key = key.strip()
-        value = value.strip()
-        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key):
-            continue
+        key, value = key.strip(), value.strip()
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key): continue
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-            value = value[1:-1]
-        out[key] = value
-    return out
+            if value[0] == '"':
+                try: value = json.loads(value)
+                except Exception: value = value[1:-1]
+            else: value = value[1:-1]
+        result[key] = value
+    return result
 
-values.update(read_env(p))
+values = read_env(p)
 values.update(read_env(pathlib.Path('config.env')))
-# Explicit aliases used by common deployment snippets.
-for alias, canonical in (('APP_ID', 'API_ID'), ('DATABASE_URI', 'MONGODB_URI'), ('DATABASE_URL', 'MONGODB_URI'), ('LOG_CHANNEL', 'CHANNEL_ID')):
+# Canonical environment variables win; support aliases used in older deploy commands.
+aliases = {'APP_ID':'API_ID', 'DATABASE_URI':'MONGODB_URI', 'DATABASE_URL':'MONGODB_URI', 'LOG_CHANNEL':'CHANNEL_ID'}
+for alias, canonical in aliases.items():
     if os.environ.get(alias) and not os.environ.get(canonical):
         os.environ[canonical] = os.environ[alias]
-# Current process exports take precedence over config.env and .env.
-for key in (
-    'API_ID','API_HASH','BOT_TOKEN','OWNER_ID','ADMINS','CHANNEL_ID',
-    'FORCE_SUB_CHANNELS','MONGODB_URI','DATABASE_NAME','REDIS_URL','BASE_URL',
-    'PORT','DEBUG','DEFAULT_EXPIRY','SESSIONS','ADMIN_PANEL_TOKEN','STREAM_CHUNK_SIZE'
-):
-    if key in os.environ:
-        values[key] = os.environ[key]
-# Legacy aliases from the caller, if canonical variables were not exported.
-for alias, canonical in (('APP_ID','API_ID'),('DATABASE_URI','MONGODB_URI'),('DATABASE_URL','MONGODB_URI'),('LOG_CHANNEL','CHANNEL_ID')):
-    if os.environ.get(alias) and canonical not in os.environ:
-        values[canonical] = os.environ[alias]
-# Quote values using dotenv-compatible double-quoted strings.
-lines = ['# Generated by deploy.vps; do not commit this file.']
-for key in sorted(values):
-    lines.append(f'{key}={json.dumps(str(values[key]))}')
+keys = ('API_ID','API_HASH','BOT_TOKEN','OWNER_ID','ADMINS','CHANNEL_ID','FORCE_SUB_CHANNELS','MONGODB_URI','DATABASE_NAME','REDIS_URL','BASE_URL','PORT','DEBUG','DEFAULT_EXPIRY','SESSIONS','ADMIN_PANEL_TOKEN','STREAM_CHUNK_SIZE')
+for key in keys:
+    if key in os.environ: values[key] = os.environ[key]
+# Also accept legacy alias values from .env/config.env.
+for alias, canonical in aliases.items():
+    if values.get(alias) and not values.get(canonical): values[canonical] = values[alias]
+# Keep all existing extra keys, safely quoted for pydantic/dotenv.
+lines = ['# Generated by deploy.vps; contains secrets. Do not commit or share.']
+for key in sorted(values): lines.append(f'{key}={json.dumps(str(values[key]))}')
 p.write_text('\n'.join(lines) + '\n')
 os.chmod(p, 0o600)
 PY
 
-# Validate mandatory Telegram configuration before building.
+# Strict preflight: fail before building if a required setting is absent/placeholder.
 python3 - <<'PY'
-import os
-from pathlib import Path
-import re
-vals = {}
-for line in Path('.env').read_text().splitlines():
-    if '=' not in line or line.lstrip().startswith('#'):
-        continue
-    k, v = line.split('=', 1)
-    v = v.strip()
-    if len(v) >= 2 and v[0] == v[-1] == '"':
-        import json
-        try: v = json.loads(v)
-        except Exception: v = v[1:-1]
-    vals[k.strip()] = v
-required = ('API_ID', 'API_HASH', 'BOT_TOKEN', 'OWNER_ID')
-for key in required:
-    value = vals.get(key, '').strip()
-    if not value or value.startswith(('YOUR_', 'your_', 'CHANGE_ME')):
-        raise SystemExit(f'[ERROR] {key} is missing. Export it before ./deploy.vps or set it in config.env/.env.')
-for key in ('API_ID', 'OWNER_ID'):
-    if not re.fullmatch(r'-?\d+', vals[key].strip()):
-        raise SystemExit(f'[ERROR] {key} must be a numeric Telegram ID.')
-for key in ('ADMINS', 'FORCE_SUB_CHANNELS'):
-    value = vals.get(key, '').strip()
-    if value and not all(re.fullmatch(r'-?\d+', x.strip()) for x in value.split(',')):
-        raise SystemExit(f'[ERROR] {key} must be comma-separated numeric Telegram IDs.')
-if vals.get('CHANNEL_ID', '').strip() and not re.fullmatch(r'-?\d+', vals['CHANNEL_ID'].strip()):
-    raise SystemExit('[ERROR] CHANNEL_ID must be a numeric Telegram chat ID.')
+import json, pathlib, re, sys
+v = {}
+for line in pathlib.Path('.env').read_text().splitlines():
+    if not line or line.lstrip().startswith('#') or '=' not in line: continue
+    k, raw = line.split('=', 1); raw = raw.strip()
+    try: value = json.loads(raw) if raw.startswith('"') else raw
+    except Exception: value = raw.strip('"')
+    v[k.strip()] = str(value)
+required = ('API_ID','API_HASH','BOT_TOKEN','OWNER_ID','MONGODB_URI')
+for k in required:
+    value = v.get(k, '').strip()
+    if not value or value.lower().startswith(('your_', 'change_me', 'replace_')):
+        sys.exit(f'[ERROR] {k} is missing or still a placeholder. Export it before deployment or edit config.env.')
+for k in ('API_ID','OWNER_ID'):
+    if not re.fullmatch(r'-?\d+', v[k].strip()): sys.exit(f'[ERROR] {k} must be numeric.')
+for k in ('ADMINS','FORCE_SUB_CHANNELS'):
+    raw = v.get(k, '').strip()
+    if raw and not all(re.fullmatch(r'-?\d+', x.strip()) for x in raw.split(',')):
+        sys.exit(f'[ERROR] {k} must be comma-separated numeric Telegram IDs.')
+if v.get('CHANNEL_ID','').strip() and not re.fullmatch(r'-?\d+', v['CHANNEL_ID'].strip()):
+    sys.exit('[ERROR] CHANNEL_ID must be numeric.')
+if not v['MONGODB_URI'].startswith(('mongodb://','mongodb+srv://')) or v['MONGODB_URI'] == 'mongodb://mongodb:27017':
+    sys.exit('[ERROR] Set a reachable MONGODB_URI (for example your MongoDB Atlas URI); the bundled local MongoDB service is not enabled in this deployment.')
+if v.get('ADMIN_PANEL_TOKEN','').strip() == '':
+    print('[WARN] ADMIN_PANEL_TOKEN is empty; verify that the admin panel is not publicly exposed.')
+if v.get('BASE_URL','').startswith(('http://localhost','http://127.0.0.1')):
+    print('[WARN] BASE_URL is localhost. Bot links will not work publicly until you set BASE_URL to your public HTTPS URL.')
 PY
 
-info "Checking Docker Compose configuration..."
-"${COMPOSE[@]}" config --quiet || die "Docker Compose configuration is invalid. Check .env and docker-compose.yml."
-
+info "Validating Docker Compose configuration..."
+"${COMPOSE[@]}" config --quiet || die "Compose configuration is invalid. Check .env and docker-compose.yml."
 info "Building and starting File2link..."
 "${COMPOSE[@]}" up -d --build --remove-orphans
 
 PORT_VALUE="$(python3 - <<'PY'
-from pathlib import Path
-import json
-for line in Path('.env').read_text().splitlines():
+import json, pathlib
+for line in pathlib.Path('.env').read_text().splitlines():
     if line.startswith('PORT='):
-        v=line.split('=',1)[1].strip()
-        try: print(json.loads(v))
-        except Exception: print(v.strip('"'))
+        raw=line.split('=',1)[1].strip()
+        try: print(json.loads(raw))
+        except Exception: print(raw.strip('"'))
         break
 else: print('8000')
 PY
 )"
 PORT_VALUE="${PORT_VALUE:-8000}"
-info "Waiting for health endpoint on port ${PORT_VALUE}..."
-for _ in $(seq 1 45); do
+info "Waiting up to 180 seconds for http://127.0.0.1:${PORT_VALUE}/health ..."
+for _ in $(seq 1 90); do
   if curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
-    info "Deployment is healthy."
+    info "Web health check passed."
     "${COMPOSE[@]}" ps
+    info "Deployment command completed. Check Telegram /start and public BASE_URL separately."
     exit 0
   fi
   sleep 2
 done
+warn "Health check did not pass. Showing service status and recent logs."
 "${COMPOSE[@]}" ps || true
-"${COMPOSE[@]}" logs --tail=120 web || true
-die "File2link did not become healthy. Review the logs above."
+"${COMPOSE[@]}" logs --tail=150 web || true
+die "Application did not become healthy. Common causes: invalid Telegram credentials, MongoDB Atlas IP allowlist/DNS, incorrect URI/password encoding, or missing bot permissions."
