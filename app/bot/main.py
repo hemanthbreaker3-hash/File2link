@@ -94,10 +94,10 @@ def register_handlers(bot):
             f"👑 **{greeting}, {mention}!**\n\n"
             f"> ⚡ **Welcome to Premium Direct Link & Streaming Service**\n"
             f">\n"
-            f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*
->
-> 📸 `/ss` reply to media → screenshots
-> 🎬 `/sv` reply to media → sample video"
+            f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*\n"
+            f">\n"
+            f"> 📸 `/ss` reply to media → screenshots\n"
+            f"> 🎬 `/sv` reply to media → sample video"
         )
         await message.reply(
             start_text,
