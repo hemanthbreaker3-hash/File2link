@@ -7,9 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import os
 import re
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
@@ -319,26 +317,7 @@ async def get_streaming_response(
     )
 
 
-# Disk cache for fully-seekable remuxed tracks
-REMUX_CACHE_DIR = Path(os.environ.get("REMUX_CACHE_DIR", "/tmp/hitler_remux_cache"))
-try:
-    REMUX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-except Exception:
-    pass
-
-_remux_locks: dict[str, asyncio.Lock] = {}
-_remux_locks_guard = asyncio.Lock()
-
-
-async def _remux_lock_for(key: str) -> asyncio.Lock:
-    async with _remux_locks_guard:
-        if key not in _remux_locks:
-            _remux_locks[key] = asyncio.Lock()
-        return _remux_locks[key]
-
-
-def _build_ffmpeg_cmd_to_file(audio_track: int, force_aac: bool, out_path: str) -> list[str]:
-    """Build FFmpeg command that reads from pipe:0 and writes a seekable MP4 to disk."""
+def _build_ffmpeg_cmd(audio_track: int, force_aac: bool = True) -> list[str]:
     cmd = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-fflags", "+genpts+discardcorrupt", "-threads", "0",
@@ -350,134 +329,83 @@ def _build_ffmpeg_cmd_to_file(audio_track: int, force_aac: bool, out_path: str) 
         cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-profile:a", "aac_low"]
     else:
         cmd += ["-c:a", "copy"]
-    # faststart + regular (non-fragmented) MP4 so the finished file is fully seekable
-    cmd += ["-movflags", "+faststart", "-f", "mp4", "-y", out_path]
+    cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof+faststart", "-f", "mp4", "pipe:1"]
     return cmd
 
 
-async def _ensure_remux_file(
+async def remux_streamer(
     client: Client,
     chat_id: int,
     message_id: int,
     file_size: int,
-    short_code: str,
-    audio_track: int,
-    force_aac: bool,
-) -> Path:
-    """
-    Ensure a complete seekable remuxed MP4 exists on disk for (short_code, audio_track).
-    Concurrent callers for the same key share one FFmpeg run via a lock.
-    """
+    audio_track: int = 0,
+    force_aac: bool = True,
+):
     if audio_track < 0 or audio_track > 32:
         raise HTTPException(status_code=400, detail="Invalid audio track")
 
-    key = f"{short_code}_a{audio_track}_{'aac' if force_aac else 'copy'}"
-    out_path = REMUX_CACHE_DIR / f"{key}.mp4"
-    done_marker = REMUX_CACHE_DIR / f"{key}.done"
-    tmp_path = REMUX_CACHE_DIR / f"{key}.tmp"
+    message = await _resolve_message(client, chat_id, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
 
-    if out_path.exists() and done_marker.exists() and out_path.stat().st_size > 1024:
-        return out_path
+    cmd = _build_ffmpeg_cmd(audio_track, force_aac=force_aac)
+    logger.info("Starting remux ffmpeg: %s", " ".join(cmd))
 
-    lock = await _remux_lock_for(key)
-    async with lock:
-        # Double-check after acquiring lock
-        if out_path.exists() and done_marker.exists() and out_path.stat().st_size > 1024:
-            return out_path
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
 
-        # Clean previous failed attempt
-        for p in (tmp_path, out_path, done_marker):
-            try:
-                if p.exists():
-                    p.unlink()
-            except OSError:
-                pass
-
-        message = await _resolve_message(client, chat_id, message_id)
-        if message is None:
-            raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
-
-        cmd = _build_ffmpeg_cmd_to_file(audio_track, force_aac, str(tmp_path))
-        logger.info("Starting seekable remux ffmpeg: %s", " ".join(cmd))
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        async def feed():
-            try:
-                async for chunk in _download_byte_range(client, message, 0, max(file_size - 1, 0)):
-                    if process.returncode is not None or process.stdin is None:
-                        break
-                    process.stdin.write(chunk)
-                    await process.stdin.drain()
-            except Exception as e:
-                logger.warning("Remux feed error: %s", e)
-            finally:
-                if process.stdin and not process.stdin.is_closing():
-                    try:
-                        process.stdin.close()
-                    except Exception:
-                        pass
-
-        feed_task = asyncio.create_task(feed())
+    async def feed():
         try:
-            _, stderr = await process.communicate()
-            await feed_task
-            if process.returncode:
-                err = (stderr or b"").decode(errors="replace")[-1500:]
-                logger.error("FFmpeg remux failed (code %s): %s", process.returncode, err)
-                try:
-                    if tmp_path.exists():
-                        tmp_path.unlink()
-                except OSError:
-                    pass
-                raise HTTPException(status_code=500, detail="Remux failed")
-        except asyncio.CancelledError:
-            if process.returncode is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            raise
+            async for chunk in _download_byte_range(client, message, 0, max(file_size - 1, 0)):
+                if process.returncode is not None or process.stdin is None:
+                    break
+                process.stdin.write(chunk)
+                await process.stdin.drain()
+        except Exception as e:
+            logger.warning("Remux feed error: %s", e)
         finally:
-            if not feed_task.done():
-                feed_task.cancel()
+            if process.stdin and not process.stdin.is_closing():
                 try:
-                    await feed_task
-                except asyncio.CancelledError:
+                    process.stdin.close()
+                except Exception:
                     pass
 
-        if not tmp_path.exists() or tmp_path.stat().st_size < 1024:
-            raise HTTPException(status_code=500, detail="Remux produced empty file")
-
-        try:
-            tmp_path.rename(out_path)
-            done_marker.write_text("ok", encoding="utf-8")
-        except OSError as e:
-            logger.error("Failed to finalize remux cache: %s", e)
-            raise HTTPException(status_code=500, detail="Remux cache write failed")
-
-        logger.info("Remux cache ready: %s (%s bytes)", out_path.name, out_path.stat().st_size)
-        return out_path
-
-
-async def _file_range_streamer(path: Path, start: int, end: int, chunk_size: int = DEFAULT_CHUNK):
-    """Yield byte ranges from a local file (for seekable remux)."""
-    length = end - start + 1
-    remaining = length
-    with open(path, "rb") as f:
-        f.seek(start)
-        while remaining > 0:
-            to_read = min(chunk_size, remaining)
-            data = f.read(to_read)
-            if not data:
+    feed_task = asyncio.create_task(feed())
+    try:
+        while True:
+            chunk = await process.stdout.read(512 * 1024)
+            if not chunk:
                 break
-            remaining -= len(data)
-            yield data
+            yield chunk
+        await feed_task
+        try:
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
+        except asyncio.TimeoutError:
+            stderr = b""
+        if process.returncode:
+            logger.error("FFmpeg remux failed: %s", (stderr or b"").decode(errors="replace")[-1500:])
+    except asyncio.CancelledError:
+        raise
+    finally:
+        if not feed_task.done():
+            feed_task.cancel()
+            try:
+                await feed_task
+            except asyncio.CancelledError:
+                pass
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await process.wait()
+        except Exception:
+            pass
 
 
 async def get_remux_response(
@@ -488,52 +416,16 @@ async def get_remux_response(
     filename: str,
     audio_track: int = 0,
     force_aac: bool = True,
-    request: Request | None = None,
-    short_code: str = "",
 ):
-    """
-    Produce (or reuse) a complete seekable remuxed MP4 and serve it with full byte-range support.
-    First request for a given (short_code, audio) may take time while FFmpeg finishes;
-    every subsequent request (and all seeks) use the cached file with Accept-Ranges: bytes.
-    """
-    if not short_code:
-        # Fallback key so cache still works if caller forgets short_code
-        short_code = f"{chat_id}_{message_id}"
-
-    path = await _ensure_remux_file(
-        client, chat_id, message_id, file_size, short_code, audio_track, force_aac
-    )
-    remux_size = path.stat().st_size
-    if remux_size <= 0:
-        raise HTTPException(status_code=500, detail="Remux file is empty")
-
-    # Range support identical to normal /stream
-    if request is not None:
-        start, end, partial = parse_range_header(request, remux_size)
-    else:
-        start, end, partial = 0, remux_size - 1, False
-
-    if start == 0 and end == remux_size - 1:
-        partial = False
-
     base_name = (filename or "media").rsplit(".", 1)[0]
     safe_name = re.sub(r'[\r\n"\\]', "_", f"{base_name}.mp4")[:180]
-
-    headers = {
-        "Content-Type": "video/mp4",
-        "Content-Length": str(end - start + 1),
-        "Content-Disposition": f'inline; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}',
-        "Accept-Ranges": "bytes",
-        "Cache-Control": "public, max-age=3600",
-        "X-Content-Type-Options": "nosniff",
-        "X-Accel-Buffering": "no",
-    }
-    if partial:
-        headers["Content-Range"] = f"bytes {start}-{end}/{remux_size}"
-
     return StreamingResponse(
-        _file_range_streamer(path, start, end),
-        status_code=206 if partial else 200,
-        headers=headers,
+        remux_streamer(client, chat_id, message_id, file_size, audio_track, force_aac=force_aac),
         media_type="video/mp4",
+        headers={
+            "Content-Disposition": f'inline; filename="{safe_name}"',
+            "Cache-Control": "no-store",
+            "Accept-Ranges": "none",
+            "X-Accel-Buffering": "no",
+        },
     )

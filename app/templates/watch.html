@@ -267,8 +267,9 @@ function setPlayerSource(src, mime) {
   player.removeAttribute('src');
   player.src = src;
   player.load();
-  // Both /stream and /remux are now fully seekable (remux is cached as a complete MP4)
-  if (t > 1) {
+  // Restore position when using the original seekable /stream (default audio, no remux)
+  const isOriginalStream = !useCompatible && (src === STREAM_URL || (src && src.indexOf('/stream/') !== -1));
+  if (isOriginalStream && t > 1) {
     const onMeta = function () {
       player.removeEventListener('loadedmetadata', onMeta);
       try { player.currentTime = t; } catch (_) {}
@@ -461,7 +462,7 @@ async function loadTracks() {
       if (idx !== currentAudioIndex) switchAudio(idx);
     });
     if (statusEl = document.getElementById('track-status')) {
-      statusEl.textContent = 'Default = original stream · other tracks = seekable remux';
+      statusEl.textContent = 'Default audio = original stream · other tracks = remux';
     }
   } catch (e) {
     console.debug('Track discovery unavailable', e);
@@ -523,7 +524,7 @@ async function switchAudio(index) {
 
   if (usingRemux) {
     src = REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
-    statusEl.textContent = (useCompatible ? 'Preparing AAC track ' : 'Preparing remux track ') + (idx + 1) + ' (seekable)…';
+    statusEl.textContent = (useCompatible ? 'Compatible AAC track ' : 'Remux track ') + (idx + 1) + '…';
   } else {
     src = STREAM_URL;
     statusEl.textContent = 'Default audio (original stream)…';
@@ -539,8 +540,7 @@ async function switchAudio(index) {
     player.load();
 
     // Wait until enough data is available to seek & play
-    // First remux can take longer (full FFmpeg pass + cache write)
-    await waitForEvent(player, 'loadedmetadata', usingRemux ? 120000 : 25000);
+    await waitForEvent(player, 'loadedmetadata', 25000);
 
     // Restore position
     try {
@@ -570,7 +570,7 @@ async function switchAudio(index) {
 
     currentAudioIndex = idx;
     if (usingRemux) {
-      statusEl.textContent = (useCompatible ? 'AAC track ' : 'Remux track ') + (idx + 1) + ' · full seeking';
+      statusEl.textContent = (useCompatible ? 'AAC track ' : 'Remux track ') + (idx + 1) + ' (seeking limited)';
     } else {
       statusEl.textContent = 'Default audio · full seeking';
     }

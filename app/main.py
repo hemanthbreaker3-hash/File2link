@@ -176,7 +176,7 @@ async def get_tracks(short_code: str):
 
 @app.get("/remux/{short_code}")
 async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int = 1):
-    """Seekable remuxed MP4 (full byte-range). First request builds & caches the track; later seeks are instant."""
+    """Browser-friendly fragmented MP4; AAC by default for universal audio."""
     file_data = await files_col.find_one({"short_code": short_code})
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="File not found or expired")
@@ -193,8 +193,6 @@ async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int
             filename=file_data["filename"],
             audio_track=audio,
             force_aac=bool(aac),
-            request=request,
-            short_code=short_code,
         )
     except HTTPException:
         raise
