@@ -237,53 +237,71 @@ const FILE_NAME = {{ file.filename|tojson }};
 const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
 const player = document.getElementById('player');
 
-// Browser HTML5 player ALWAYS uses /remux?aac=1 so video+audio work
-// (AC3/DTS/TrueHD/EAC3/PCM often play video with silence in Chrome/Safari/Firefox).
-// External apps (VLC, HV Stream, PLAYit) still use raw STREAM_URL.
-let useCompatible = true;
+// Seeking-first: HTML5 uses /stream (byte-range, fast buffer/seek).
+// Remux+AAC only when codecs are incompatible or user picks another track / Fix audio.
+let useCompatible = false;
 let currentAudioIndex = 0;
 let silentWatchTimer = null;
+const SAFE_AUDIO = new Set(['aac','mp3','opus','vorbis','flac','mp4a','pcm_s16le','pcm_s24le','pcm_s32le','vorbis']);
 
 function primaryPlayUrl(audioIndex) {
   const idx = (audioIndex === undefined || audioIndex === null) ? 0 : audioIndex;
-  // Always remux + AAC for in-page player
-  return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
+  if (useCompatible) {
+    return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
+  }
+  return STREAM_URL;
 }
 
 function setPlayerSource(src, mime) {
   const sourceEl = document.getElementById('video-source');
   if (sourceEl) {
     sourceEl.src = src;
-    sourceEl.type = mime || 'video/mp4';
+    // browser seeks best with real container mime when streaming original
+    sourceEl.type = mime || (useCompatible ? 'video/mp4' : (PLAYER_MIME || 'video/mp4'));
   }
+  const t = player.currentTime || 0;
+  const wasPlaying = !player.paused;
   player.pause();
   player.removeAttribute('src');
   player.src = src;
   player.load();
+  // restore position when staying on seekable /stream
+  if (!useCompatible && t > 1) {
+    const onMeta = function () {
+      player.removeEventListener('loadedmetadata', onMeta);
+      try { player.currentTime = t; } catch (_) {}
+      if (wasPlaying) player.play().catch(function () {});
+    };
+    player.addEventListener('loadedmetadata', onMeta);
+  }
 }
 
 (function initSource() {
-  // Ensure element is not muted and has volume
   try {
     player.muted = false;
     player.defaultMuted = false;
     player.volume = 1.0;
+    // Faster start / smoother buffer for range streams
+    player.preload = 'auto';
   } catch (_) {}
 
-  const src = primaryPlayUrl(0);
-  setPlayerSource(src, 'video/mp4');
+  setPlayerSource(primaryPlayUrl(0), PLAYER_MIME || 'video/mp4');
 
-  // If still silent after playback starts, nudge user / re-apply volume boost
+  // Prefer low-latency buffer: play as soon as we can
+  player.addEventListener('canplay', function onCan() {
+    player.removeEventListener('canplay', onCan);
+    try { player.muted = false; player.volume = 1.0; } catch (_) {}
+  });
+
   player.addEventListener('playing', function onPlaying() {
-    player.removeEventListener('playing', onPlaying);
     try { player.muted = false; player.volume = 1.0; } catch (_) {}
     if (typeof ensureAudioGraph === 'function') {
       ensureAudioGraph().then(function () {
         if (typeof applyBoost === 'function') applyBoost();
       }).catch(function () {});
     }
-    // Detect possible silence: if after 2.5s still muted flag or volume 0, force unmute
     if (silentWatchTimer) clearTimeout(silentWatchTimer);
+    // If still muted/zero after 2s, offer compatible path (don't auto-break seeking)
     silentWatchTimer = setTimeout(function () {
       try {
         if (player.muted || player.volume === 0) {
@@ -291,9 +309,32 @@ function setPlayerSource(src, mime) {
           player.volume = 1.0;
         }
       } catch (_) {}
-    }, 2500);
+    }, 2000);
+  });
+
+  // Detect slow buffer / stall — keep UI feedback
+  var statusEl = document.getElementById('track-status');
+  player.addEventListener('waiting', function () {
+    if (statusEl && !useCompatible) statusEl.textContent = 'Buffering…';
+  });
+  player.addEventListener('playing', function () {
+    if (statusEl && statusEl.textContent === 'Buffering…') statusEl.textContent = '';
   });
 })();
+
+/** After /api/tracks loads: auto-remux only if no browser-safe audio codec. */
+function maybeAutoCompatible(tracks) {
+  if (!tracks || !tracks.length || useCompatible) return;
+  var anySafe = tracks.some(function (t) {
+    var c = String(t.codec || t.codec_name || t.label || '').toLowerCase();
+    for (var s of SAFE_AUDIO) { if (c.indexOf(s) !== -1) return true; }
+    return false;
+  });
+  if (!anySafe) {
+    // Incompatible audio (AC3/DTS/TrueHD…) — enable AAC remux for sound
+    enableCompatibleMode();
+  }
+}
 
 async function enableCompatibleMode() {
   useCompatible = true;
@@ -302,7 +343,7 @@ async function enableCompatibleMode() {
   if (box) box.style.display = 'flex';
   if (statusEl) {
     statusEl.classList.remove('error');
-    statusEl.textContent = 'Using compatible AAC audio…';
+    statusEl.textContent = 'Compatible AAC audio (seeking limited)…';
   }
   await switchAudio(currentAudioIndex || 0);
 }
@@ -397,6 +438,8 @@ async function loadTracks() {
     if (!r.ok) return;
     const d = await r.json();
     const tracks = d.audio_tracks || [];
+    try { maybeAutoCompatible(tracks); } catch (_) {}
+
     if (tracks.length < 2) return;
 
     const box = document.getElementById('track-box');

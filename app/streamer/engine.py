@@ -203,9 +203,13 @@ async def media_streamer(
     if not live:
         raise HTTPException(status_code=503, detail="Telegram streaming session is unavailable")
 
-    # Parallel multi-session for large ranges (improvement over single ByteStreamer)
+    # FileToLink-style: sequential for seek/buffer ranges (fast TTFB).
+    # Parallel only for large sequential downloads (>= 16 MiB).
+    SEEK_FAST_MAX = 16 * 1024 * 1024
     n = min(len(live), MAX_PARALLEL_PARTS)
-    if total < MIN_PART_BYTES * 2:
+    if total <= SEEK_FAST_MAX:
+        n = 1
+    elif total < MIN_PART_BYTES * 2:
         n = 1
     else:
         n = min(n, max(1, total // MIN_PART_BYTES))
