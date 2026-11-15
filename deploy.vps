@@ -158,8 +158,8 @@ else: print('8000')
 PY
 )"
 PORT_VALUE="${PORT_VALUE:-8000}"
-info "Waiting up to 180 seconds for http://127.0.0.1:${PORT_VALUE}/health ..."
-for _ in $(seq 1 90); do
+info "Waiting up to 10 seconds for http://127.0.0.1:${PORT_VALUE}/health ..."
+for _ in $(seq 1 20); do
   if curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
     info "Web health check passed."
     "${COMPOSE[@]}" ps
@@ -234,7 +234,7 @@ UNIT
     info "Deployment command completed."
     exit 0
   fi
-  sleep 2
+  sleep 0.5
 done
 warn "Health check did not pass. Showing service status and recent logs."
 "${COMPOSE[@]}" ps || true

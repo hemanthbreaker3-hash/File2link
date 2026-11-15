@@ -18,10 +18,10 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PORT:-8000}/health || exit 1"]
-      interval: 20s
-      timeout: 5s
-      retries: 5
-      start_period: 40s
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 10s
 
   redis:
     image: redis:7-alpine

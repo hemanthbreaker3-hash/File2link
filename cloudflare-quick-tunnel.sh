@@ -20,11 +20,11 @@ if [[ ! -x /usr/local/bin/cloudflared ]]; then
 fi
 
 # Wait until the web service is available before exposing it publicly.
-for _ in $(seq 1 90); do
-  if curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
+for _ in $(seq 1 20); do
+  if curl --connect-timeout 1 --max-time 1 -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
     break
   fi
-  sleep 2
+  sleep 0.5
 done
 curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null || {
   log 'File2link health endpoint is not ready; refusing to start the public tunnel.'
@@ -108,12 +108,12 @@ fi
 
 # Recreate the web container so its environment also reflects BASE_URL.
 "${COMPOSE[@]}" up -d --force-recreate web
-for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
+for _ in $(seq 1 20); do
+  if curl --connect-timeout 1 --max-time 1 -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
     log 'Web service is healthy with the generated Cloudflare URL.'
     break
   fi
-  sleep 2
+  sleep 0.5
 done
 curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null || {
   log 'Web service did not recover after applying BASE_URL.'
