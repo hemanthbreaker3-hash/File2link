@@ -5,9 +5,6 @@ import html
 import logging
 import os
 import mimetypes
-from urllib.parse import urlparse, unquote, parse_qs, urljoin
-from email.message import Message as EmailMessage
-import httpx
 
 from wzgram import filters
 from wzgram.enums import ParseMode
@@ -45,57 +42,6 @@ def get_ist_greeting():
 
 def _kb(rows):
     return InlineKeyboardMarkup(rows)
-
-
-async def _inspect_download_url(url: str) -> dict:
-    """Read remote file headers safely to identify extensionless download endpoints."""
-    from app.utils.mediainfo_fmt import validate_download_url
-
-    current = url
-    headers = {}
-    # Follow redirects manually and validate every destination to avoid SSRF via redirects.
-    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0), follow_redirects=False) as session:
-        for _ in range(6):
-            await validate_download_url(current)
-            response = await session.head(current)
-            if response.status_code in (405, 501):
-                await response.aclose()
-                response = await session.get(current, headers={"Range": "bytes=0-0"})
-            if response.is_redirect:
-                target = response.headers.get("location")
-                await response.aclose()
-                if not target:
-                    break
-                current = urljoin(current, target)
-                continue
-            headers = dict(response.headers)
-            await response.aclose()
-            break
-    disposition = headers.get("content-disposition", "")
-    filename = ""
-    if disposition:
-        parsed = EmailMessage()
-        parsed["content-disposition"] = disposition
-        filename = parsed.get_filename() or ""
-    content_type = (headers.get("content-type", "").split(";", 1)[0].strip().lower())
-    return {"filename": unquote(filename), "content_type": content_type, "final_url": current, "headers": headers}
-
-
-def _is_archive_file(filename: str, mime_type: str) -> bool:
-    ext = os.path.splitext(filename.lower())[1]
-    return ext in {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".iso", ".cab", ".zst", ".arj", ".lz", ".lzma"} or mime_type in {
-        "application/zip", "application/x-rar-compressed", "application/vnd.rar",
-        "application/x-7z-compressed", "application/x-tar", "application/gzip",
-        "application/x-bzip2", "application/x-xz", "application/x-iso9660-image",
-    }
-
-
-def _is_streamable_file(filename: str, mime_type: str) -> bool:
-    ext = os.path.splitext(filename.lower())[1]
-    return mime_type.startswith(("video/", "audio/")) or ext in {
-        ".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".mpeg", ".mpg",
-        ".ts", ".m3u8", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wav"
-    }
 
 
 def register_handlers(bot):
@@ -164,13 +110,6 @@ def register_handlers(bot):
 
     @bot.on_message(filters.media & ~filters.channel)
     async def media_handler(client, message: Message):
-        # filters.media may also match link-preview/web-page objects. Let plain URL
-        # messages reach direct_url_handler instead of reporting Unsupported media type.
-        supported_attachment = any(getattr(message, kind, None) for kind in (
-            "document", "video", "audio", "animation", "photo", "voice", "video_note"
-        ))
-        if not supported_attachment:
-            return
         user = message.from_user
         if not user or user.is_bot:
             return
@@ -283,11 +222,7 @@ def register_handlers(bot):
 
         if links_ready:
             download_url = f"{base_url}/dl/{short_code}"
-            archive_exts = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".tgz", ".iso", ".cab", ".zst"}
-            is_archive = os.path.splitext(file_name)[1].lower() in archive_exts
-            if is_archive:
-                await files_col.update_one({"short_code": short_code}, {"$set": {"is_archive": True}})
-            stream_url = f"{base_url}/stream/{short_code}"
+            stream_url = f"{base_url}/watch/{short_code}"
             caption = (
                 "💎 <b>Media Links Generated</b>\n\n"
                 f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
@@ -295,17 +230,22 @@ def register_handlers(bot):
                 f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
                 "🚀 <b>Fast Links</b>\n"
                 f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>\n"
-                + ("" if is_archive else f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n")
-                + f"\n📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+                f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n\n"
+                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
             )
-            media_row = [InlineKeyboardButton("⚡ Direct Download", url=download_url)]
-            if not is_archive:
-                media_row.append(InlineKeyboardButton("🍿 Watch Online", url=stream_url))
-            user_buttons = _kb([media_row,
+            user_buttons = _kb([
+                [
+                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
+                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
+                ],
                 [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
                 [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")],
             ])
-            channel_buttons = _kb([media_row,
+            channel_buttons = _kb([
+                [
+                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
+                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
+                ],
                 [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
             ])
         else:
@@ -353,70 +293,6 @@ def register_handlers(bot):
                 )
             except Exception as e:
                 logger.exception("Error mirroring to log channel: %s", e)
-
-
-    @bot.on_message(filters.private & filters.text & ~filters.command(["start", "ss", "sv", "mi", "stats", "broadcast", "ban", "unban", "autodel", "baseurl"]))
-    async def direct_url_handler(client, message: Message):
-        """Create File2link URLs from an existing direct HTTP(S) download URL."""
-        user = message.from_user
-        raw_url = (message.text or "").strip()
-        if not user or user.is_bot or not raw_url.lower().startswith(("http://", "https://")):
-            return
-        if not await check_rate_limit(user.id):
-            return await message.reply("⏳ **Rate Limit Exceeded**\\n\\n> Please wait a few seconds.")
-        if not await is_user_fsubbed(client, user.id):
-            return await message.reply(
-                "🔒 **Access Restricted**\\n\\n> Join our official updates channel first.",
-                reply_markup=_kb([[InlineKeyboardButton("📢 Join Updates Channel", url=settings.UPDATE_CHANNEL_URL)]]),
-            )
-        try:
-            remote = await _inspect_download_url(raw_url)
-        except Exception as exc:
-            return await message.reply(f"❌ **Could not inspect download URL:** `{html.escape(str(exc))}`")
-
-        parsed = urlparse(raw_url)
-        query = parse_qs(parsed.query)
-        query_name = (query.get("filename") or query.get("name") or query.get("file") or [""])[0]
-        path_name = unquote(os.path.basename(parsed.path))
-        filename = remote.get("filename") or path_name or unquote(os.path.basename(query_name)) or "download"
-        # Generic endpoint names such as /download are not real file names.
-        if filename.lower() in {"download", "file", "get", "stream"} and query_name:
-            filename = unquote(os.path.basename(query_name))
-        filename = filename.replace("\\r", " ").replace("\\n", " ")[:180]
-        mime_type = remote.get("content_type") or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-        guessed_mime = mimetypes.guess_type(filename)[0]
-        if mime_type == "application/octet-stream" and guessed_mime:
-            mime_type = guessed_mime
-        is_archive = _is_archive_file(filename, mime_type)
-        is_streamable = not is_archive and _is_streamable_file(filename, mime_type)
-        short_code = generate_short_code()
-        expiry = datetime.datetime.utcnow() + datetime.timedelta(hours=settings.DEFAULT_EXPIRY) if settings.DEFAULT_EXPIRY > 0 else None
-        await files_col.insert_one({
-            "file_id": "", "file_unique_id": short_code, "filename": filename,
-            "mime_type": mime_type, "file_size": 0, "uploader_id": user.id,
-            "created_at": datetime.datetime.utcnow(), "expiry_time": expiry,
-            "access_count": 0, "short_code": short_code, "chat_id": 0, "message_id": 0,
-            "external_url": raw_url, "is_archive": is_archive, "is_streamable": is_streamable,
-        })
-        try:
-            base_url = normalize_public_base_url(settings.BASE_URL)
-        except ValueError as exc:
-            await files_col.delete_one({"short_code": short_code})
-            return await message.reply(f"⚠️ **Set a public Base URL first:** `{html.escape(str(exc))}`")
-        download_url = f"{base_url}/dl/{short_code}"
-        stream_url = f"{base_url}/stream/{short_code}"
-        caption = (
-            "💎 <b>Download URL Converted Successfully</b>\\n\\n"
-            f"📂 <b>File Name:</b> <code>{html.escape(filename)}</code>\\n"
-            f"⚙️ <b>Type:</b> <code>{'Archive' if is_archive else html.escape(mime_type)}</code>\\n\\n"
-            f'⬇️ <a href="{html.escape(download_url, quote=True)}">Direct Download</a>'
-        )
-        rows = [[InlineKeyboardButton("⬇️ Direct Download", url=download_url)]]
-        if is_streamable:
-            caption += f'\n▶️ <a href="{html.escape(stream_url, quote=True)}">Watch / Stream</a>'
-            rows.append([InlineKeyboardButton("▶️ Watch Online", url=stream_url)])
-        rows.append([InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")])
-        await message.reply(caption, parse_mode=ParseMode.HTML, reply_markup=_kb(rows))
 
     @bot.on_callback_query(filters.regex(r"^del_"))
     async def delete_callback(client, callback: CallbackQuery):

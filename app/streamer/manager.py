@@ -1,32 +1,15 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import re
-import time
 from typing import List, Optional
 
 from wzgram import Client
 from wzgram.types import BotCommand
 
-try:
-    from wzgram.errors import FloodWait
-except ImportError:  # pragma: no cover - fallback if wzgram ever renames it
-    FloodWait = None  # type: ignore
-
 from app.database.connection import settings
 
 logger = logging.getLogger(__name__)
-
-# Bot/user auth is persisted to disk (instead of in_memory=True) so a
-# container restart reuses the existing, already-authorized session instead
-# of calling Telegram's auth.ImportBotAuthorization again. Repeating that
-# call on every crash/restart is what escalates a FloodWait, and because the
-# wait is tied to the api_id/IP (not the specific bot token), swapping to a
-# "new" BOT_TOKEN does not clear it - only persisting the session and letting
-# the real wait elapse does.
-SESSION_DIR = os.environ.get("SESSION_DIR", "/app/sessions")
 
 
 class SessionManager:
@@ -35,25 +18,17 @@ class SessionManager:
         self.bot_client: Optional[Client] = None
         self._index = 0
         self._started = False
-        # Surfaced on /health so the process can report "still waiting out a
-        # Telegram FloodWait" instead of looking like a hard crash.
-        self.telegram_ready = False
-        self.last_error: Optional[str] = None
-        self.flood_wait_until: Optional[float] = None
-        self._retry_task: Optional[asyncio.Task] = None
 
     def prepare_bot(self):
         """Create bot Client so handlers can be registered before start()."""
         if self.bot_client is not None:
             return
-        os.makedirs(SESSION_DIR, exist_ok=True)
         self.bot_client = Client(
             name="hitler_bot",
             api_id=settings.API_ID,
             api_hash=settings.API_HASH,
             bot_token=settings.BOT_TOKEN,
-            workdir=SESSION_DIR,
-            in_memory=False,
+            in_memory=True,
             workers=16,
             max_concurrent_transmissions=16,
         )
@@ -108,65 +83,9 @@ class SessionManager:
                 self.clients.append(self.bot_client)
 
         self._started = True
-        self.telegram_ready = True
-        self.last_error = None
-        self.flood_wait_until = None
         logger.info("Streaming clients ready: %s", len(self.clients))
 
-    async def start_with_retry(self) -> None:
-        """Start Telegram clients in the background, surviving FloodWait.
-
-        Runs as a background task so a bad token or an in-progress FloodWait
-        never crashes the FastAPI process: the HTTP server (and /health)
-        comes up immediately, and this loop keeps retrying with the correct
-        backoff until Telegram lets the session through. This is what stops
-        the restart-crash-reauth loop that escalates FloodWait in the first
-        place.
-        """
-        delay = 5.0
-        while True:
-            try:
-                await self.start()
-                return
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                wait = None
-                if FloodWait is not None and isinstance(e, FloodWait):
-                    wait = getattr(e, "value", None) or getattr(e, "x", None)
-                else:
-                    # wzgram re-exports pyrogram's error hierarchy; fall back
-                    # to duck-typing in case the import path above ever
-                    # breaks, matching the pattern already used in engine.py.
-                    if type(e).__name__ == "FloodWait":
-                        wait = getattr(e, "value", None) or getattr(e, "x", None)
-                if wait:
-                    wait = float(wait) + 5  # small safety buffer
-                    self.flood_wait_until = time.time() + wait
-                    self.last_error = (
-                        f"Telegram FloodWait: waiting {int(wait)}s before retrying "
-                        "auth (do not change BOT_TOKEN or restart the container - "
-                        "that resets this timer and makes it worse)."
-                    )
-                    logger.warning(self.last_error)
-                    await asyncio.sleep(wait)
-                    continue
-                # Non-flood error (bad token, network blip, etc.): log and
-                # retry with a capped exponential backoff instead of raising
-                # and letting the container crash-loop.
-                self.last_error = f"{type(e).__name__}: {e}"
-                logger.error("Telegram client start failed, retrying in %.0fs: %s", delay, e)
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, 60.0)
-
     async def stop(self):
-        if self._retry_task is not None:
-            self._retry_task.cancel()
-            try:
-                await self._retry_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._retry_task = None
         unique = {id(c): c for c in [*self.clients, self.bot_client] if c is not None}
         for client in unique.values():
             try:
@@ -177,7 +96,6 @@ class SessionManager:
         self.clients.clear()
         self.bot_client = None
         self._started = False
-        self.telegram_ready = False
 
 
     async def register_bot_commands(self) -> None:

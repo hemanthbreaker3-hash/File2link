@@ -187,6 +187,3 @@ A 2 Gbps (2000 Mbps) throughput is a target, not a guarantee: the VPS NIC,
 provider limits, Telegram/source throughput, session count, CPU, and client
 network all affect real speed. Do not set concurrency higher than your VPS can
 handle; monitor memory and outbound bandwidth.
-
-
-Tunnel recovery: the helper checks the public `/health` endpoint every 20 seconds and recycles an unreachable Quick Tunnel after three consecutive failures. systemd then restarts it and synchronizes the replacement URL. Previously shared links to an expired temporary hostname cannot be repaired; use a named tunnel and owned domain for stable links.

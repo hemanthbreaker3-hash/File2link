@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from app.database.connection import settings, files_col, client as mongo_client, create_indexes, load_custom_settings
 from app.streamer.manager import session_manager
 from app.streamer.engine import get_streaming_response, get_remux_response
@@ -15,7 +15,6 @@ import asyncio
 import logging
 import os
 import sys
-import time
 import datetime
 from pathlib import Path
 
@@ -38,12 +37,7 @@ async def lifespan(app: FastAPI):
         await load_custom_settings()
         session_manager.prepare_bot()
         register_handlers(session_manager.bot_client)
-        # Run Telegram auth in the background instead of awaiting it here.
-        # If it's mid-FloodWait, awaiting it would block (and the healthcheck
-        # would fail and Docker would restart us, which only makes the wait
-        # longer). The HTTP server comes up immediately either way; /health
-        # reports whether Telegram is still connecting.
-        session_manager._retry_task = asyncio.create_task(session_manager.start_with_retry())
+        await session_manager.start()
         if getattr(settings, "BASE_URL", None):
             os.environ["BASE_URL"] = str(settings.BASE_URL).rstrip("/")
         logger.info("HITLER service started (wzgram)")
@@ -77,21 +71,7 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 @app.get("/health")
 async def health():
-    # Always 200: the HTTP server itself is up even while Telegram auth is
-    # still retrying/waiting out a FloodWait in the background. Keeping this
-    # healthy prevents Docker from restarting the container mid-wait, which
-    # is what previously kept re-triggering auth.ImportBotAuthorization.
-    return {
-        "status": "ok",
-        "service": "HITLER",
-        "telegram_ready": session_manager.telegram_ready,
-        "telegram_last_error": session_manager.last_error,
-        "telegram_flood_wait_remaining_s": (
-            max(0, int(session_manager.flood_wait_until - time.time()))
-            if session_manager.flood_wait_until
-            else None
-        ),
-    }
+    return {"status": "ok", "service": "HITLER"}
 
 @app.get("/")
 async def index(request: Request):
@@ -103,11 +83,6 @@ async def watch_page(request: Request, short_code: str):
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
-    if file_data.get("is_archive") or file_data.get("is_streamable") is False:
-        raise HTTPException(status_code=415, detail="This file type cannot be streamed")
-    if file_data.get("external_url"):
-        return RedirectResponse(file_data["external_url"], status_code=302)
-
     return templates.TemplateResponse(
         request=request,
         name="watch.html",
@@ -129,16 +104,6 @@ async def stream_file(request: Request, short_code: str):
         raise HTTPException(status_code=404, detail="Link expired")
 
     await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
-
-    if file_data.get("external_url"):
-        if request.url.path.startswith("/dl/"):
-            return RedirectResponse(file_data["external_url"], status_code=302)
-        if file_data.get("is_archive") or (request.url.path.startswith("/stream/") and file_data.get("is_streamable") is False):
-            raise HTTPException(status_code=415, detail="This file type cannot be streamed")
-        return RedirectResponse(file_data["external_url"], status_code=302)
-
-    if request.url.path.startswith(("/stream/", "/watch/")) and (file_data.get("is_archive") or file_data.get("is_streamable") is False):
-        raise HTTPException(status_code=415, detail="This file type cannot be streamed")
 
     all_clients = session_manager.get_all_clients()
     if not all_clients:
