@@ -238,16 +238,17 @@ const FILE_NAME = {{ file.filename|tojson }};
 const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
 const player = document.getElementById('player');
 
-// Seeking-first: HTML5 uses /stream (byte-range, fast buffer/seek).
-// Remux+AAC only when codecs are incompatible or user picks another track / Fix audio.
+// Seeking-first: HTML5 uses /stream (byte-range, fast buffer/seek) for the default audio track.
+// Remux is required only for non-default audio tracks, or when codecs are incompatible (Fix audio).
 let useCompatible = false;
 let currentAudioIndex = 0;
 let silentWatchTimer = null;
 const SAFE_AUDIO = new Set(['aac','mp3','opus','vorbis','flac','mp4a','pcm_s16le','pcm_s24le','pcm_s32le','vorbis']);
 
 function primaryPlayUrl(audioIndex) {
-  const idx = (audioIndex === undefined || audioIndex === null) ? 0 : audioIndex;
-  if (useCompatible) {
+  const idx = (audioIndex === undefined || audioIndex === null) ? 0 : Number(audioIndex);
+  // Default audio (0) → original stream (full seeking). Any other track or compatible mode → remux.
+  if (useCompatible || idx !== 0) {
     return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
   }
   return STREAM_URL;
@@ -266,8 +267,9 @@ function setPlayerSource(src, mime) {
   player.removeAttribute('src');
   player.src = src;
   player.load();
-  // restore position when staying on seekable /stream
-  if (!useCompatible && t > 1) {
+  // Restore position when using the original seekable /stream (default audio, no remux)
+  const isOriginalStream = !useCompatible && (src === STREAM_URL || (src && src.indexOf('/stream/') !== -1));
+  if (isOriginalStream && t > 1) {
     const onMeta = function () {
       player.removeEventListener('loadedmetadata', onMeta);
       try { player.currentTime = t; } catch (_) {}
@@ -460,7 +462,7 @@ async function loadTracks() {
       if (idx !== currentAudioIndex) switchAudio(idx);
     });
     if (statusEl = document.getElementById('track-status')) {
-      statusEl.textContent = 'Use bot download link for multi-audio — VLC/MX/HV can pick tracks';
+      statusEl.textContent = 'Default audio = original stream · other tracks = remux';
     }
   } catch (e) {
     console.debug('Track discovery unavailable', e);
@@ -513,21 +515,24 @@ async function switchAudio(index) {
   // Pause first so the element is in a clean state before src change
   try { player.pause(); } catch (_) {}
 
-  // Multi-audio: use bot-generated DOWNLOAD link (/dl) — full file with all tracks.
-  // External players pick the audio track from this URL.
-  // Remux+AAC only when Fix audio / compatible mode is on.
+  // Default audio (index 0) → original /stream (full seeking, no remux).
+  // Any other audio track → must remux that specific track.
+  // Compatible mode (AC3/DTS etc.) always forces remux + AAC.
+  const idx = Number(index);
   let src;
-  if (useCompatible) {
-    src = REMUX_URL + '?audio=' + encodeURIComponent(index) + '&aac=1';
-    statusEl.textContent = 'Compatible AAC track ' + (Number(index) + 1) + '…';
+  let usingRemux = useCompatible || idx !== 0;
+
+  if (usingRemux) {
+    src = REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
+    statusEl.textContent = (useCompatible ? 'Compatible AAC track ' : 'Remux track ') + (idx + 1) + '…';
   } else {
-    src = (typeof DL_URL !== 'undefined' ? DL_URL : STREAM_URL);
-    statusEl.textContent = 'Download link (all audio tracks)…';
+    src = STREAM_URL;
+    statusEl.textContent = 'Default audio (original stream)…';
   }
 
   try {
     if (typeof setPlayerSource === 'function') {
-      setPlayerSource(src, useCompatible ? 'video/mp4' : (PLAYER_MIME || 'video/mp4'));
+      setPlayerSource(src, usingRemux ? 'video/mp4' : (PLAYER_MIME || 'video/mp4'));
     } else {
       player.src = src;
       player.load();
@@ -563,8 +568,12 @@ async function switchAudio(index) {
       }
     }
 
-    currentAudioIndex = index;
-    statusEl.textContent = useCompatible ? ('AAC track ' + (Number(index) + 1)) : 'Download link · multi-audio in file';
+    currentAudioIndex = idx;
+    if (usingRemux) {
+      statusEl.textContent = (useCompatible ? 'AAC track ' : 'Remux track ') + (idx + 1) + ' (seeking limited)';
+    } else {
+      statusEl.textContent = 'Default audio · full seeking';
+    }
     statusEl.classList.remove('error');
   } catch (err) {
     console.warn('Audio track switch failed', err);
