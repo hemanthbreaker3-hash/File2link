@@ -122,5 +122,32 @@ curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null || {
 }
 
 log "BASE_URL saved to .env and MongoDB: $TUNNEL_URL"
-log 'Tunnel is running. Keep this systemd service enabled; it will regenerate and resynchronize the URL after a VPS reboot.'
-wait "$CF_PID"
+log 'Tunnel is running. Monitoring the public endpoint; a failed tunnel will be recycled and its new URL synchronized.'
+
+# Quick Tunnels can occasionally lose their edge connection while the local
+# cloudflared process remains alive. Probe the public health endpoint and
+# recycle the connector after repeated failures so systemd can issue a fresh
+# Quick Tunnel URL and synchronize it into .env and MongoDB on the next run.
+FAILURES=0
+while kill -0 "$CF_PID" 2>/dev/null; do
+  sleep 20
+  if ! kill -0 "$CF_PID" 2>/dev/null; then
+    log 'cloudflared exited; systemd will restart the tunnel helper.'
+    wait "$CF_PID" || true
+    exit 1
+  fi
+  if curl --connect-timeout 5 --max-time 12 -fsS "${TUNNEL_URL}/health" >/dev/null 2>&1; then
+    FAILURES=0
+  else
+    FAILURES=$((FAILURES + 1))
+    log "Public tunnel health check failed (${FAILURES}/3)."
+    if (( FAILURES >= 3 )); then
+      log 'Public tunnel is unreachable; recycling cloudflared so a fresh URL can be generated.'
+      kill "$CF_PID" 2>/dev/null || true
+      wait "$CF_PID" 2>/dev/null || true
+      exit 1
+    fi
+  fi
+done
+log 'cloudflared process stopped; asking systemd to restart the tunnel helper.'
+exit 1

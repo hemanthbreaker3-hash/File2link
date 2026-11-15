@@ -83,8 +83,8 @@ async def watch_page(request: Request, short_code: str):
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
-    if file_data.get("is_archive"):
-        raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
+    if file_data.get("is_archive") or file_data.get("is_streamable") is False:
+        raise HTTPException(status_code=415, detail="This file type cannot be streamed")
     if file_data.get("external_url"):
         return RedirectResponse(file_data["external_url"], status_code=302)
 
@@ -113,12 +113,12 @@ async def stream_file(request: Request, short_code: str):
     if file_data.get("external_url"):
         if request.url.path.startswith("/dl/"):
             return RedirectResponse(file_data["external_url"], status_code=302)
-        if file_data.get("is_archive"):
-            raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
+        if file_data.get("is_archive") or (request.url.path.startswith("/stream/") and file_data.get("is_streamable") is False):
+            raise HTTPException(status_code=415, detail="This file type cannot be streamed")
         return RedirectResponse(file_data["external_url"], status_code=302)
 
-    if request.url.path.startswith(("/stream/", "/watch/")) and file_data.get("is_archive"):
-        raise HTTPException(status_code=415, detail="Archive files cannot be streamed")
+    if request.url.path.startswith(("/stream/", "/watch/")) and (file_data.get("is_archive") or file_data.get("is_streamable") is False):
+        raise HTTPException(status_code=415, detail="This file type cannot be streamed")
 
     all_clients = session_manager.get_all_clients()
     if not all_clients:
