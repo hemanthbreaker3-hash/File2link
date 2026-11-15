@@ -231,6 +231,7 @@
 
 <script>
 const STREAM_URL = new URL('/stream/{{ file.short_code }}', window.location.origin).href;
+const DL_URL = new URL('/dl/{{ file.short_code }}', window.location.origin).href;
 const REMUX_URL = new URL('/remux/{{ file.short_code }}', window.location.origin).href;
 const PLAYER_MIME = {{ file.mime_type|tojson }};
 const FILE_NAME = {{ file.filename|tojson }};
@@ -458,6 +459,9 @@ async function loadTracks() {
       const idx = Number(sel.value);
       if (idx !== currentAudioIndex) switchAudio(idx);
     });
+    if (statusEl = document.getElementById('track-status')) {
+      statusEl.textContent = 'Use bot download link for multi-audio — VLC/MX/HV can pick tracks';
+    }
   } catch (e) {
     console.debug('Track discovery unavailable', e);
   }
@@ -509,12 +513,21 @@ async function switchAudio(index) {
   // Pause first so the element is in a clean state before src change
   try { player.pause(); } catch (_) {}
 
-  const src = REMUX_URL + '?audio=' + encodeURIComponent(index) + '&aac=1';
+  // Multi-audio: use bot-generated DOWNLOAD link (/dl) — full file with all tracks.
+  // External players pick the audio track from this URL.
+  // Remux+AAC only when Fix audio / compatible mode is on.
+  let src;
+  if (useCompatible) {
+    src = REMUX_URL + '?audio=' + encodeURIComponent(index) + '&aac=1';
+    statusEl.textContent = 'Compatible AAC track ' + (Number(index) + 1) + '…';
+  } else {
+    src = (typeof DL_URL !== 'undefined' ? DL_URL : STREAM_URL);
+    statusEl.textContent = 'Download link (all audio tracks)…';
+  }
 
   try {
-    // Change source via helper so <source> tag stays in sync.
     if (typeof setPlayerSource === 'function') {
-      setPlayerSource(src, 'video/mp4');
+      setPlayerSource(src, useCompatible ? 'video/mp4' : (PLAYER_MIME || 'video/mp4'));
     } else {
       player.src = src;
       player.load();
@@ -551,7 +564,7 @@ async function switchAudio(index) {
     }
 
     currentAudioIndex = index;
-    statusEl.textContent = 'Selected audio';
+    statusEl.textContent = useCompatible ? ('AAC track ' + (Number(index) + 1)) : 'Download link · multi-audio in file';
     statusEl.classList.remove('error');
   } catch (err) {
     console.warn('Audio track switch failed', err);

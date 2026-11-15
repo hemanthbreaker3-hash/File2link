@@ -4,6 +4,7 @@ import logging
 from typing import List, Optional
 
 from wzgram import Client
+from wzgram.types import BotCommand
 
 from app.database.connection import settings
 
@@ -41,6 +42,7 @@ class SessionManager:
             self.prepare_bot()
         await self.bot_client.start()
         logger.info("HITLER bot client started (wzgram)")
+        await self.register_bot_commands()
 
         session_strings = [s.strip() for s in settings.SESSIONS.split(",") if s.strip()]
         if not session_strings:
@@ -84,6 +86,29 @@ class SessionManager:
         self.clients.clear()
         self.bot_client = None
         self._started = False
+
+
+    async def register_bot_commands(self) -> None:
+        """Register all bot slash commands with Telegram on startup."""
+        if not self.bot_client:
+            return
+        commands = [
+            BotCommand("start", "Start / welcome & how to use"),
+            BotCommand("ss", "Screenshots — reply to media"),
+            BotCommand("sv", "Sample video — reply to media"),
+            BotCommand("mi", "MediaInfo — reply to media"),
+            BotCommand("stats", "Bot statistics (admin)"),
+            BotCommand("broadcast", "Broadcast message (admin)"),
+            BotCommand("ban", "Ban user (admin)"),
+            BotCommand("unban", "Unban user (admin)"),
+            BotCommand("autodel", "Auto-delete timer (admin)"),
+            BotCommand("baseurl", "Set public base URL (admin)"),
+        ]
+        try:
+            await self.bot_client.set_bot_commands(commands)
+            logger.info("Registered %s bot commands with Telegram", len(commands))
+        except Exception as e:
+            logger.warning("Failed to register bot commands: %s", e)
 
     def get_client(self) -> Optional[Client]:
         if not self.clients:
