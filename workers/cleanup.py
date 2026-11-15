@@ -11,8 +11,7 @@ async def cleanup_expired_links():
         try:
             now = datetime.datetime.utcnow()
             result = await files_col.delete_many({
-                "expiry_time": {"$lt": now},
-                "expiry_time": {"$ne": None}
+                "expiry_time": {"$lt": now, "$ne": None}
             })
             if result.deleted_count > 0:
                 logger.info(f"Deleted {result.deleted_count} expired links")

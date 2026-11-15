@@ -13,8 +13,12 @@ class SessionManager:
 
     async def start(self):
         from telethon.sessions import MemorySession
+        if self.bot_client and self.bot_client.is_connected():
+            return
+        self.clients.clear()
+        self._index = 0
         # Start Bot Client
-        self.bot_client = TelegramClient(MemorySession(), settings.API_ID, settings.API_HASH)
+        self.bot_client = TelegramClient(MemorySession(), settings.API_ID, settings.API_HASH, connection_retries=5, retry_delay=1)
         await self.bot_client.start(bot_token=settings.BOT_TOKEN)
         logger.info("Bot client started")
 
@@ -31,7 +35,8 @@ class SessionManager:
                         StringSession(session_str), 
                         settings.API_ID, 
                         settings.API_HASH,
-                        connection_retries=5
+                        connection_retries=5,
+                        retry_delay=1
                     )
                     await client.start()
                     self.clients.append(client)
@@ -43,8 +48,15 @@ class SessionManager:
                 self.clients.append(self.bot_client)
 
     async def stop(self):
-        for client in self.clients:
-            await client.disconnect()
+        # The bot client is not necessarily part of the streaming-client pool.
+        unique = {id(c): c for c in [*self.clients, self.bot_client] if c is not None}
+        for client in unique.values():
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.exception("Error while disconnecting Telegram client")
+        self.clients.clear()
+        self.bot_client = None
 
     def get_client(self):
         if not self.clients:

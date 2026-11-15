@@ -1,199 +1,151 @@
-<!DOCTYPE html>
-<html lang="en" class="dark">
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}HiTLER YT Official{% endblock %}</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
-        
-        :root {
-            --neon-blue: #00d4ff;
-            --dark-blue: #0a1628;
-            --mid-blue: #0f2744;
-            --accent-red: #ff2d55;
-            --glow-blue: rgba(0, 212, 255, 0.45);
-            --glow-red: rgba(255, 45, 85, 0.35);
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            color: #e8f4ff;
-            font-family: 'Outfit', system-ui, sans-serif;
-            min-height: 100vh;
-            overflow-x: hidden;
-            background: linear-gradient(160deg, #050a14 0%, #0a1628 40%, #0c1a30 100%);
-        }
-
-        #bg-video {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            min-width: 100%;
-            min-height: 100%;
-            width: auto;
-            height: auto;
-            z-index: -2;
-            transform: translate(-50%, -50%);
-            object-fit: cover;
-            filter: brightness(0.35) saturate(1.1);
-        }
-
-        .bg-overlay {
-            position: fixed;
-            inset: 0;
-            background:
-                radial-gradient(ellipse at 20% 0%, rgba(0, 212, 255, 0.12) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 100%, rgba(255, 45, 85, 0.08) 0%, transparent 45%),
-                linear-gradient(180deg, rgba(5, 10, 20, 0.4) 0%, rgba(10, 22, 40, 0.85) 100%);
-            z-index: -1;
-            pointer-events: none;
-        }
-
-        .watermark {
-            position: fixed;
-            bottom: 16px;
-            right: 16px;
-            opacity: 0.08;
-            font-size: 1.5rem;
-            font-weight: 800;
-            pointer-events: none;
-            z-index: 1000;
-            user-select: none;
-            letter-spacing: 0.15rem;
-            color: var(--neon-blue);
-        }
-
-        .glass {
-            background: rgba(15, 39, 68, 0.45);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border: 1px solid rgba(0, 212, 255, 0.15);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-        }
-
-        .glass-card {
-            background: rgba(15, 39, 68, 0.55);
-            backdrop-filter: blur(18px);
-            border: 1px solid rgba(0, 212, 255, 0.18);
-            border-radius: 1.25rem;
-            transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-        }
-
-        .glass-card:hover {
-            border-color: rgba(0, 212, 255, 0.35);
-            box-shadow: 0 0 28px var(--glow-blue);
-        }
-
-        .btn-gradient {
-            background: linear-gradient(135deg, #00b4e6 0%, #0077b6 50%, #ff2d55 100%);
-            background-size: 200% 200%;
-            transition: all 0.3s ease;
-            color: white;
-            font-weight: 600;
-        }
-
-        .btn-gradient:hover {
-            background-position: 100% 0;
-            box-shadow: 0 0 24px var(--glow-blue), 0 0 12px var(--glow-red);
-            transform: translateY(-1px);
-        }
-
-        .text-neon {
-            color: var(--neon-blue);
-            text-shadow: 0 0 12px var(--glow-blue);
-        }
-
-        .text-gradient {
-            background: linear-gradient(135deg, #00d4ff 0%, #7dd3fc 40%, #ff2d55 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .nav-logo-img {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
-            object-fit: cover;
-            border: 2px solid rgba(0, 212, 255, 0.5);
-            box-shadow: 0 0 12px var(--glow-blue);
-        }
-
-        .brand-title {
-            font-weight: 800;
-            letter-spacing: -0.02em;
-        }
-
-        .brand-title .accent {
-            color: var(--accent-red);
-            text-shadow: 0 0 10px var(--glow-red);
-        }
-
-        a { transition: color 0.2s ease; }
-        a:hover { color: var(--neon-blue); }
-
-        /* Smooth, lightweight animations */
-        @media (prefers-reduced-motion: no-preference) {
-            .glass-card, .btn-gradient, .external-player-link {
-                transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-            }
-        }
-
-        /* Mobile spacing */
-        @media (max-width: 640px) {
-            body { padding: 0.75rem; }
-            .nav-brand-text { font-size: 1.1rem; }
-        }
-    </style>
-    {% block head_extra %}{% endblock %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#06060f">
+  <meta name="description" content="HITLER Telegram media streaming">
+  <title>{% block title %}HITLER{% endblock %}</title>
+  <style>
+    :root{
+      color-scheme:dark;
+      --bg:#06060f;
+      --bg2:#0a0a18;
+      --card:#0e0e1c;
+      --card2:#12122a;
+      --line:#1e1e3a;
+      --line2:#2a2a4a;
+      --text:#eef0ff;
+      --muted:#8b8db0;
+      --blue:#3b82f6;
+      --blue-glow:#60a5fa;
+      --red:#ef4444;
+      --red-glow:#f87171;
+      --accent:#ef4444;
+      --neon-blue:0 0 12px rgba(59,130,246,.55),0 0 28px rgba(59,130,246,.25);
+      --neon-red:0 0 12px rgba(239,68,68,.55),0 0 28px rgba(239,68,68,.25);
+      --radius:14px;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{
+      margin:0;
+      background:radial-gradient(1200px 600px at 10% -10%,rgba(59,130,246,.12),transparent 55%),
+                 radial-gradient(900px 500px at 100% 0%,rgba(239,68,68,.10),transparent 50%),
+                 var(--bg);
+      color:var(--text);
+      font:400 15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      min-height:100vh;
+    }
+    a{color:inherit;text-decoration:none}
+    button,input,select{font:inherit}
+    .wrap{width:min(100% - 24px,980px);margin:auto}
+    .topbar{
+      height:60px;
+      display:flex;
+      align-items:center;
+      border-bottom:1px solid var(--line);
+      position:sticky;
+      top:0;
+      background:rgba(6,6,15,.94);
+      backdrop-filter:blur(12px);
+      z-index:20;
+    }
+    .topbar-inner{
+      width:min(100% - 24px,980px);
+      margin:auto;
+      display:grid;
+      grid-template-columns:auto 1fr auto;
+      align-items:center;
+      gap:12px;
+    }
+    .topbar-logo{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      flex-shrink:0;
+    }
+    .topbar-logo img{
+      width:38px;
+      height:38px;
+      border-radius:10px;
+      object-fit:cover;
+      border:1px solid rgba(59,130,246,.35);
+      box-shadow:0 0 12px rgba(59,130,246,.35);
+    }
+    .topbar-title{
+      text-align:center;
+      font-weight:800;
+      font-size:15px;
+      letter-spacing:.4px;
+      color:var(--text);
+      line-height:1.2;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .topbar-title span{
+      color:var(--red);
+      text-shadow:var(--neon-red);
+    }
+    .brand-link{
+      color:var(--muted);
+      font-size:13px;
+      transition:color .2s;
+      flex-shrink:0;
+      justify-self:end;
+    }
+    .brand-link:hover{color:var(--blue-glow)}
+    .card{
+      background:linear-gradient(160deg,var(--card),var(--card2));
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:0 4px 24px rgba(0,0,0,.35);
+    }
+    .muted{color:var(--muted)}
+    .btn{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-height:42px;padding:0 16px;
+      border:1px solid var(--line2);
+      border-radius:11px;
+      background:linear-gradient(180deg,#16162e,#101022);
+      color:#fff;cursor:pointer;
+      transition:border-color .2s,box-shadow .2s,transform .15s;
+    }
+    .btn:hover{border-color:var(--blue);box-shadow:var(--neon-blue);transform:translateY(-1px)}
+    .btn:active{transform:translateY(0)}
+    .accent{
+      background:linear-gradient(135deg,#ef4444,#dc2626);
+      border-color:var(--red);
+      box-shadow:var(--neon-red);
+    }
+    .accent:hover{border-color:var(--red-glow);box-shadow:0 0 16px rgba(239,68,68,.7)}
+    main{padding:28px 0 100px}
+    .footer{text-align:center;color:#555;font-size:12px;padding:28px 0 80px;border-top:1px solid var(--line)}
+    img,video,iframe{max-width:100%}
+    button,a{-webkit-tap-highlight-color:transparent}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
+    @media(max-width:600px){
+      main{padding-top:18px}
+      .wrap{width:min(100% - 16px,980px)}
+      .topbar-inner{width:min(100% - 16px,980px)}
+      .topbar-title{font-size:13px}
+      .topbar-logo img{width:34px;height:34px}
+    }
+  </style>
+  {% block head %}{% endblock %}
 </head>
-<body class="p-4 md:p-8">
-    <video autoplay muted loop playsinline id="bg-video" poster="">
-        <source src="/static/cantarella-smiles-at-you-wuthering-waves-moewalls-com.mp4" type="video/mp4">
-    </video>
-    <div class="bg-overlay"></div>
-    <div class="watermark">HiTLER YT</div>
-
-    <nav class="max-w-6xl mx-auto flex justify-between items-center mb-8 md:mb-12 glass p-3 md:p-4 rounded-2xl">
-        <div class="flex items-center space-x-3">
-            <img src="https://files.catbox.moe/mau8mb.jpg" alt="Logo" class="nav-logo-img" width="40" height="40" loading="eager">
-            <span class="text-xl md:text-2xl brand-title tracking-tight nav-brand-text">
-                HiTLER <span class="accent">YT</span> <span class="text-neon text-sm md:text-base font-semibold">Official</span>
-            </span>
-        </div>
-        <div class="hidden md:flex space-x-6 text-sm font-medium text-slate-300">
-            <a href="/" class="hover:text-[var(--neon-blue)]">Home</a>
-            <a href="https://t.me/cantarellabots" target="_blank" rel="noopener">Channel</a>
-            <a href="https://t.me/cantarella_wuwa" target="_blank" rel="noopener">Developer</a>
-        </div>
-        <a href="https://t.me/cantarellabots" target="_blank" rel="noopener" class="btn-gradient px-4 md:px-6 py-2 rounded-xl text-sm md:text-base">
-            Join Channel
-        </a>
-    </nav>
-
-    <main class="max-w-6xl mx-auto">
-        {% block content %}{% endblock %}
-    </main>
-
-    <footer class="mt-16 md:mt-20 py-10 border-t border-cyan-500/10 text-center">
-        <div class="mb-4">
-            <h2 class="text-xl font-bold text-gradient">HiTLER YT Official</h2>
-            <p class="text-slate-500 text-sm mt-1">High-speed media streaming · multi-audio · external players</p>
-        </div>
-        <div class="flex justify-center gap-6 text-slate-400 text-sm">
-            <a href="https://t.me/cantarellabots" target="_blank" rel="noopener" class="hover:text-[var(--neon-blue)]">
-                <i class="fab fa-telegram-plane mr-1"></i> Channel
-            </a>
-            <a href="https://t.me/cantarella_wuwa" target="_blank" rel="noopener" class="hover:text-[var(--neon-blue)]">
-                <i class="fas fa-code mr-1"></i> Dev
-            </a>
-        </div>
-        <p class="mt-6 text-xs text-slate-600">FileToLink · optimized & secure</p>
-    </footer>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="topbar-logo" href="/" title="HITLER">
+      <img src="https://files.catbox.moe/mau8mb.jpg" alt="HITLER logo" width="38" height="38">
+    </a>
+    <div class="topbar-title">HiTLER <span>YT</span> official</div>
+    <a class="brand-link" href="https://t.me/HiTLERYT" target="_blank" rel="noopener">@hitleryt</a>
+  </div>
+</header>
+<main><div class="wrap">{% block content %}{% endblock %}</div></main>
+<footer class="footer"><a href="https://t.me/HiTLERYT" target="_blank" rel="noopener">HITLER · @hitleryt</a></footer>
 </body>
 </html>
