@@ -48,6 +48,11 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
+# Fast health check – returns immediately so deploy scripts don't wait 180s
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @app.get("/")
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
