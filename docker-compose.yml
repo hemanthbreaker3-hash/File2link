@@ -1,39 +1,30 @@
+
 services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
+      dockerfile: docker/Dockerfile
     ports:
-      - "${PORT:-8000}:${PORT:-8000}"
+      - "8000:8000"
     env_file:
       - .env
-    environment:
-      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env}
-      DATABASE_NAME: ${DATABASE_NAME:-file2link}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      PORT: ${PORT:-8000}
     depends_on:
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${PORT:-8000}/health || exit 1"]
-      interval: 20s
-      timeout: 5s
-      retries: 5
-      start_period: 40s
+      - mongodb
+      - redis
+    volumes:
+      - .:/app
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
 
   redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+    image: redis:alpine
+    ports:
+      - "6379:6379"
 
 volumes:
-  redis_data:
+  mongodb_data:

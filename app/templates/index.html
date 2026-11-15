@@ -1,15 +1,51 @@
 {% extends "base.html" %}
-{% block title %}HITLER{% endblock %}
+
+{% block title %}HiTLER YT Official · Fast Media Streaming{% endblock %}
+
 {% block content %}
-<section style="padding:44px 0 28px;text-align:center">
-  <div class="muted" style="font-size:12px;letter-spacing:1.5px">HITLER</div>
-  <h1 style="font-size:clamp(30px,7vw,54px);line-height:1.05;margin:10px 0">Fast, simple media streaming.</h1>
-  <p class="muted" style="max-width:620px;margin:0 auto">Watch Telegram media directly in your browser or open it in a player installed on your device.</p>
-</section>
-<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
-  <article class="card" style="padding:20px"><b>Direct playback</b><p class="muted">Range requests and browser-friendly streaming for quick seeking.</p></article>
-  <article class="card" style="padding:20px"><b>Multiple audio tracks</b><p class="muted">Detect available tracks and switch when browser-compatible remuxing is possible.</p></article>
-  <article class="card" style="padding:20px"><b>External players</b><p class="muted">Separate player shortcuts for mobile, desktop, tablet and TV devices.</p></article>
-</section>
-<p class="muted" style="text-align:center;margin-top:22px"><a href="https://t.me/HiTLERYT" target="_blank" rel="noopener">https://t.me/HiTLERYT</a></p>
+<div class="text-center py-12 sm:py-20 animate-in">
+    <h1 class="text-4xl sm:text-5xl md:text-7xl font-bold mb-6 tracking-tight leading-tight">
+        <span class="text-white">HiTLER</span><span class="text-neon"> YT</span><br>
+        <span class="text-gradient text-3xl sm:text-4xl md:text-5xl">Media Streamer</span>
+    </h1>
+    <p class="text-base sm:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+        Ultra-high-speed Telegram media streaming without limits.
+        Piped directly from Telegram using multi-session load balancing with multi-audio support.
+    </p>
+    
+    <div class="flex flex-col sm:flex-row justify-center items-center gap-3 sm:gap-4">
+        <a href="https://t.me/cantarellabots" target="_blank" rel="noopener" class="btn-gradient px-7 py-3.5 rounded-2xl font-bold text-base flex items-center gap-2">
+            <i class="fab fa-telegram"></i> Join Our Channel
+        </a>
+        <a href="https://t.me/cantarella_wuwa" target="_blank" rel="noopener" class="player-btn px-7 py-3.5 rounded-2xl font-bold text-base">
+            Contact Developer
+        </a>
+    </div>
+</div>
+
+<div id="features" class="grid md:grid-cols-3 gap-5 sm:gap-8 mt-12 sm:mt-16">
+    <div class="glass-card p-6 sm:p-8 text-center">
+        <div class="w-14 h-14 bg-cyan-500/15 rounded-2xl flex items-center justify-center text-cyan-400 text-2xl mx-auto mb-5 border border-cyan-500/20">
+            <i class="fas fa-rocket"></i>
+        </div>
+        <h3 class="text-lg font-bold mb-3 text-white">Instant Generation</h3>
+        <p class="text-slate-400 text-sm leading-relaxed">Get direct links within seconds of sending your file to the bot.</p>
+    </div>
+    
+    <div class="glass-card p-6 sm:p-8 text-center">
+        <div class="w-14 h-14 bg-red-500/15 rounded-2xl flex items-center justify-center text-red-400 text-2xl mx-auto mb-5 border border-red-500/20">
+            <i class="fas fa-play"></i>
+        </div>
+        <h3 class="text-lg font-bold mb-3 text-white">Direct Streaming</h3>
+        <p class="text-slate-400 text-sm leading-relaxed">Watch instantly with seeking, multi-audio track selection, and external player support.</p>
+    </div>
+    
+    <div class="glass-card p-6 sm:p-8 text-center">
+        <div class="w-14 h-14 bg-emerald-500/15 rounded-2xl flex items-center justify-center text-emerald-400 text-2xl mx-auto mb-5 border border-emerald-500/20">
+            <i class="fas fa-shield-alt"></i>
+        </div>
+        <h3 class="text-lg font-bold mb-3 text-white">No Storage</h3>
+        <p class="text-slate-400 text-sm leading-relaxed">Files are piped directly from Telegram servers. We never store your data.</p>
+    </div>
+</div>
 {% endblock %}

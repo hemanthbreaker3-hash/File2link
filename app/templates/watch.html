@@ -1,219 +1,426 @@
 {% extends "base.html" %}
-{% block title %}{{ file.filename }} · HITLER{% endblock %}
-{% block head %}
+
+{% block title %}Watching: {{ file.filename }} · HiTLER YT Official{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
 <style>
-  .player-box{background:#000;border:1px solid var(--line);border-radius:14px;overflow:hidden}
-  video{display:block;width:100%;max-height:72vh;background:#000;aspect-ratio:16/9;touch-action:pan-x}
-  .info{padding:16px}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;color:var(--muted);font-size:13px}
-  .tools{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.select{background:#1b1b22;color:#fff;border:1px solid var(--line);border-radius:9px;padding:10px;max-width:100%}
-  .player-panel{display:none}.player-panel.active{display:block}
-  .player-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}
-  .pbtn{min-height:44px;border:1px solid var(--line);border-radius:10px;background:#1b1b22;color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:9px;cursor:pointer}
-  .pbtn:hover{border-color:#555565}.copy-ok{font-size:12px;color:#69e69a;min-height:18px}
-  .player-tabs{position:fixed;z-index:30;left:50%;bottom:max(10px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(94vw,520px);display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:5px;background:#15151b;border:1px solid #30303a;border-radius:14px;box-shadow:0 8px 28px #000}
-  .tab{border:0;background:transparent;color:#9d9da8;padding:9px 4px;border-radius:9px;font-size:12px;cursor:pointer}.tab.active{background:#272730;color:#fff}
-  .volume-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;font-size:13px}.volume-tools input{flex:1;min-width:130px;accent-color:var(--accent)}
-  .gesture-hint{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:space-between;padding:0 8%;opacity:0;transition:opacity .15s;font-size:12px;color:#fff;text-shadow:0 1px 5px #000}
-  .gesture-hint.show{opacity:1}.player-box{position:relative;touch-action:pan-x}.gesture-hint span{background:#0009;border:1px solid #ffffff30;border-radius:20px;padding:8px 11px}
-  .notice{padding:10px 12px;border-radius:9px;background:#1a1820;color:#bbb;font-size:12px;margin-top:10px}
-  @media(min-width:900px){.watch-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}.side{align-self:start;position:sticky;top:72px}}
+    /* Plyr theme overrides for neon look */
+    :root {
+        --plyr-color-main: #00d4ff;
+        --plyr-video-control-color: #e2e8f0;
+        --plyr-video-control-background-hover: rgba(0, 212, 255, 0.25);
+        --plyr-audio-control-background: rgba(10, 22, 40, 0.85);
+        --plyr-range-fill-background: #00d4ff;
+        --plyr-video-background: #050d1a;
+    }
+
+    .watch-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1.25rem;
+        flex-wrap: wrap;
+    }
+    .watch-logo {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 2px solid rgba(0, 212, 255, 0.4);
+        box-shadow: 0 0 16px rgba(0, 212, 255, 0.35);
+        flex-shrink: 0;
+    }
+    .watch-logo img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+    .watch-title {
+        flex: 1;
+        text-align: center;
+        font-size: clamp(1.35rem, 4vw, 1.85rem);
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        background: linear-gradient(135deg, #00d4ff 0%, #90e0ef 50%, #ff2d55 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        line-height: 1.2;
+    }
+    .watch-spacer {
+        width: 48px;
+        flex-shrink: 0;
+    }
+    @media (max-width: 480px) {
+        .watch-spacer { display: none; }
+        .watch-title { text-align: left; }
+    }
+
+    /* Audio Track Selector */
+    .track-selector-container {
+        display: none;
+        margin-bottom: 1rem;
+    }
+    .track-selector-container.visible {
+        display: block;
+        animation: fadeInUp 0.35s ease;
+    }
+    .track-selector-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        padding: 0.7rem 1.1rem;
+        background: rgba(10, 22, 40, 0.8);
+        backdrop-filter: blur(14px);
+        border: 1px solid rgba(0, 212, 255, 0.18);
+        border-radius: 1rem;
+    }
+    .track-selector-bar .track-icon {
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(135deg, #00b4d8, #0077b6);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.9rem;
+        color: white;
+        box-shadow: 0 0 12px rgba(0, 180, 216, 0.4);
+    }
+    .track-selector-bar .track-label {
+        font-size: 0.72rem;
+        color: rgba(226, 232, 240, 0.55);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
+        font-weight: 600;
+    }
+    .track-selector-bar select {
+        flex: 1;
+        min-width: 0;
+        background: rgba(0, 212, 255, 0.08);
+        border: 1px solid rgba(0, 212, 255, 0.22);
+        color: #e2e8f0;
+        padding: 0.45rem 2rem 0.45rem 0.7rem;
+        border-radius: 0.5rem;
+        font-family: 'Outfit', sans-serif;
+        font-size: 0.9rem;
+        cursor: pointer;
+        outline: none;
+        transition: all 0.2s ease;
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2300d4ff' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 0.7rem center;
+    }
+    .track-selector-bar select:hover,
+    .track-selector-bar select:focus {
+        border-color: #00d4ff;
+        background-color: rgba(0, 212, 255, 0.12);
+        box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15);
+    }
+    .track-selector-bar select option {
+        background: #0a1628;
+        color: #e2e8f0;
+        padding: 0.5rem;
+    }
+    .track-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.2rem 0.55rem;
+        background: rgba(0, 212, 255, 0.12);
+        color: #00d4ff;
+        border-radius: 0.4rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        border: 1px solid rgba(0, 212, 255, 0.25);
+    }
+    .remux-notice {
+        display: none;
+        margin-top: 0.5rem;
+        padding: 0.55rem 0.9rem;
+        background: rgba(255, 45, 85, 0.08);
+        border: 1px solid rgba(255, 45, 85, 0.2);
+        border-radius: 0.75rem;
+        font-size: 0.78rem;
+        color: rgba(255, 120, 140, 0.9);
+    }
+    .remux-notice.visible {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .player-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.65rem 1rem;
+        border-radius: 0.75rem;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        background: rgba(10, 22, 40, 0.7);
+        border: 1px solid rgba(0, 212, 255, 0.15);
+        color: #e2e8f0;
+    }
+    .player-btn:hover {
+        background: rgba(0, 212, 255, 0.12);
+        border-color: rgba(0, 212, 255, 0.4);
+        color: #00d4ff;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 14px rgba(0, 212, 255, 0.15);
+    }
+    .player-btn i {
+        font-size: 1rem;
+        opacity: 0.9;
+    }
+
+    .stat-pill {
+        background: rgba(0, 212, 255, 0.06);
+        border: 1px solid rgba(0, 212, 255, 0.12);
+        border-radius: 1rem;
+        padding: 0.9rem 0.75rem;
+        text-align: center;
+        transition: all 0.2s;
+    }
+    .stat-pill:hover {
+        border-color: rgba(0, 212, 255, 0.3);
+        background: rgba(0, 212, 255, 0.1);
+    }
+
+    .plyr--video {
+        border-radius: 1rem;
+        overflow: hidden;
+    }
 </style>
 {% endblock %}
-{% block content %}
-<div class="watch-grid">
-  <section>
-    <div class="player-box">
-      <video id="player" controls playsinline preload="metadata" crossorigin="anonymous">
-        <source id="video-source" src="/stream/{{ file.short_code }}" type="{{ file.mime_type }}">
-        Your browser cannot play this media.
-      </video>
-      <div class="gesture-hint" id="gesture-hint" aria-live="polite"><span id="brightness-label">Brightness 100%</span><span id="volume-label">Volume 100%</span></div>
-    </div>
-    <div class="card info" style="margin-top:10px">
-      <div style="font-weight:700;word-break:break-word">{{ file.filename }}</div>
-      <div class="meta"><span>{{ (file.file_size / (1024*1024))|round(2) }} MB</span><span>{{ file.access_count }} views</span></div>
-      <div id="track-box" class="tools" style="display:none">
-        <select id="audio-select" class="select" aria-label="Audio track"></select>
-        <span id="track-status" class="muted" style="align-self:center;font-size:12px"></span>
-      </div>
-      <div class="volume-tools">
-        <label for="volume-boost">Volume boost <b id="volume-value">100%</b></label>
-        <input id="volume-boost" type="range" min="100" max="300" step="10" value="100" aria-label="Volume boost up to 300 percent">
-        <label for="brightness">Brightness <b id="brightness-value">100%</b></label>
-        <input id="brightness" type="range" min="50" max="150" step="5" value="100" aria-label="Screen brightness">
-      </div>
-      <p class="muted" style="font-size:11px;margin:6px 0 0">Touch gestures: swipe up/down on the right for volume and on the left for brightness. Boost is browser playback only; external players use their own audio controls.</p>
-      <div class="tools">
-        <a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>
-        <button class="btn" type="button" onclick="copyStream()">Copy stream URL</button>
-      </div>
-      <div id="copy-status" class="copy-ok"></div>
-    </div>
-  </section>
 
-  <aside class="side">
-    <div class="card" style="padding:14px">
-      <b>Open in player</b>
-      <p class="muted" style="font-size:12px;margin:5px 0 12px">Android buttons use explicit VIEW intents. On desktop or TV, copy the URL into your player’s Open Network Stream option.</p>
-      <div id="mobile" class="player-panel active"><div class="player-grid" id="mobile-grid"></div></div>
-      <div id="desktop" class="player-panel"><div class="player-grid" id="desktop-grid"></div></div>
-      <div id="tablet" class="player-panel"><div class="player-grid" id="tablet-grid"></div></div>
-      <div id="tv" class="player-panel"><div class="player-grid" id="tv-grid"></div></div>
-      <div class="notice">If a player does not open, use <b>Copy stream URL</b> and paste it into that player's Open URL/Network Stream option.</div>
+{% block content %}
+<div class="max-w-4xl mx-auto animate-in">
+
+    <!-- Header: logo left + centered title -->
+    <div class="watch-header">
+        <div class="watch-logo">
+            <img src="/static/images/logo.jpg" alt="HiTLER YT Logo">
+        </div>
+        <h1 class="watch-title">HiTLER YT Official</h1>
+        <div class="watch-spacer" aria-hidden="true"></div>
     </div>
-  </aside>
+
+    <!-- Player -->
+    <div class="glass-card overflow-hidden mb-4 shadow-[0_0_40px_rgba(0,212,255,0.08)]">
+        <video id="player" playsinline controls preload="metadata" data-poster="/static/images/poster.jpg">
+            <source id="video-source" type="video/mp4" />
+            Your browser cannot play this media. Use one of the external players below.
+        </video>
+    </div>
+
+    <!-- Audio Track Selector -->
+    <div id="track-selector-container" class="track-selector-container">
+        <div class="track-selector-bar">
+            <div class="track-icon"><i class="fas fa-language"></i></div>
+            <div><div class="track-label">Audio Track</div></div>
+            <select id="audio-track-select" aria-label="Choose audio language"></select>
+            <span id="track-badge" class="track-badge" style="display:none;">
+                <i class="fas fa-check-circle"></i><span id="track-badge-text"></span>
+            </span>
+        </div>
+        <div id="remux-notice" class="remux-notice visible">
+            <i class="fas fa-info-circle"></i>
+            <span>Browser-compatible audio is prepared on the fly. Changing tracks restarts playback from the start.</span>
+        </div>
+    </div>
+    <p id="track-status" class="text-sm text-slate-400 mb-5" role="status">Detecting audio tracks…</p>
+
+    <!-- Quick links -->
+    <div class="flex flex-col sm:flex-row gap-3 mb-7">
+        <a href="https://t.me/cantarellabots" target="_blank" rel="noopener" class="flex-1 glass p-3.5 rounded-xl flex items-center justify-center gap-3 hover:border-cyan-400/40 transition group">
+            <div class="w-9 h-9 bg-cyan-500/15 rounded-full flex items-center justify-center text-cyan-400 group-hover:scale-110 transition">
+                <i class="fab fa-telegram-plane"></i>
+            </div>
+            <div class="text-left">
+                <span class="block text-[0.65rem] text-slate-400 uppercase tracking-widest">Join Telegram</span>
+                <span class="font-semibold text-sm">@CantarellaBots</span>
+            </div>
+        </a>
+        <a href="https://t.me/cantarella_wuwa" target="_blank" rel="noopener" class="flex-1 glass p-3.5 rounded-xl flex items-center justify-center gap-3 hover:border-red-400/30 transition group">
+            <div class="w-9 h-9 bg-red-500/15 rounded-full flex items-center justify-center text-red-400 group-hover:scale-110 transition">
+                <i class="fas fa-user-ninja"></i>
+            </div>
+            <div class="text-left">
+                <span class="block text-[0.65rem] text-slate-400 uppercase tracking-widest">Developer</span>
+                <span class="font-semibold text-sm">@cantarella_wuwa</span>
+            </div>
+        </a>
+    </div>
+
+    <!-- File info card -->
+    <div class="glass-card p-5 sm:p-7">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-5 mb-6">
+            <div class="min-w-0">
+                <h2 class="text-xl sm:text-2xl font-bold mb-2 break-words text-white">{{ file.filename }}</h2>
+                <div class="flex flex-wrap gap-3 text-sm text-slate-400">
+                    <span><i class="fas fa-database mr-1.5 text-cyan-500/70"></i>{{ (file.file_size / (1024*1024))|round(2) }} MB</span>
+                    <span><i class="fas fa-clock mr-1.5 text-cyan-500/70"></i>{{ file.created_at.strftime('%Y-%m-%d') }}</span>
+                    <span><i class="fas fa-eye mr-1.5 text-cyan-500/70"></i>{{ file.access_count }} views</span>
+                </div>
+            </div>
+            <div class="flex gap-2.5 flex-shrink-0">
+                <a href="/dl/{{ file.short_code }}" class="btn-gradient px-5 py-2.5 rounded-xl font-semibold text-sm flex items-center gap-2">
+                    <i class="fas fa-download"></i> Download
+                </a>
+                <button onclick="copyLink()" class="player-btn px-5 py-2.5">
+                    <i class="fas fa-copy"></i> Copy
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-7">
+            <div class="stat-pill">
+                <span class="block text-slate-400 text-[0.65rem] uppercase tracking-wider mb-1">Status</span>
+                <span class="text-emerald-400 font-bold text-sm">Online</span>
+            </div>
+            <div class="stat-pill">
+                <span class="block text-slate-400 text-[0.65rem] uppercase tracking-wider mb-1">Type</span>
+                <span class="font-bold text-sm">{{ file.mime_type.split('/')[-1]|upper }}</span>
+            </div>
+            <div class="stat-pill">
+                <span class="block text-slate-400 text-[0.65rem] uppercase tracking-wider mb-1">Delivery</span>
+                <span class="text-cyan-400 font-bold text-sm">Direct stream</span>
+            </div>
+            <div class="stat-pill">
+                <span class="block text-slate-400 text-[0.65rem] uppercase tracking-wider mb-1">Audio</span>
+                <span class="font-bold text-sm" id="audio-count-text">Detecting…</span>
+            </div>
+        </div>
+
+        <!-- External players -->
+        <div class="space-y-3">
+            <h3 class="font-bold text-base text-white flex items-center gap-2">
+                <i class="fas fa-external-link-alt text-cyan-400 text-sm"></i>
+                Open with external player
+            </h3>
+            <p class="text-sm text-slate-400 leading-relaxed">
+                On Android, tapping a button opens the chosen app with the original stream so all audio and subtitle tracks are available.
+                If the app is not installed the browser fallback is used.
+            </p>
+            <div class="flex flex-wrap gap-2.5 pt-1">
+                {% for player_app in player_links %}
+                <a href="{{ stream_url }}" data-intent="{{ player_app.intent_url }}" class="external-player-link player-btn" rel="noopener">
+                    <i class="{{ player_app.icon }}"></i> {{ player_app.name }}
+                </a>
+                {% endfor %}
+                <a href="{{ stream_url }}" class="player-btn">
+                    <i class="fas fa-globe"></i> Browser / Other
+                </a>
+            </div>
+        </div>
+    </div>
 </div>
 
-<nav class="player-tabs" aria-label="Player device categories">
-  <button class="tab active" data-tab="mobile">Mobile</button>
-  <button class="tab" data-tab="desktop">Desktop</button>
-  <button class="tab" data-tab="tablet">Tablet</button>
-  <button class="tab" data-tab="tv">TV</button>
-</nav>
-
+<script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
 <script>
-const STREAM_URL = new URL('/stream/{{ file.short_code }}', window.location.origin).href;
-const REMUX_URL = new URL('/remux/{{ file.short_code }}', window.location.origin).href;
-const PLAYER_MIME = {{ file.mime_type|tojson }};
-const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
-const player = document.getElementById('player');
+    const SHORT_CODE = {{ file.short_code|tojson }};
+    const ORIGINAL_SRC = '/stream/' + encodeURIComponent(SHORT_CODE);
+    const REMUX_BASE = '/remux/' + encodeURIComponent(SHORT_CODE);
+    const FILE_TITLE = {{ file.filename|tojson }};
+    const video = document.getElementById('player');
+    const source = document.getElementById('video-source');
+    const player = new Plyr(video, {
+        title: FILE_TITLE,
+        keyboard: { focused: true, global: true },
+        tooltips: { controls: true, seek: true },
+        controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen']
+    });
+    let currentAudioTrack = 0;
 
-function androidIntent(url, pkg, mime) {
-  const u = new URL(url);
-  const scheme = u.protocol.replace(':','');
-  return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${scheme};action=android.intent.action.VIEW;type=${mime || 'video/*'};package=${pkg};S.browser_fallback_url=${encodeURIComponent(url)};end`;
-}
-function addPlayer(gridId, label, href) {
-  const a=document.createElement('a'); a.className='pbtn'; a.textContent=label; a.href=href;
-  if (!href.startsWith('intent:')) { a.target='_blank'; a.rel='noopener'; }
-  document.getElementById(gridId).appendChild(a);
-}
+    // Prefer intent:// on Android Chrome so the target package receives the stream.
+    if (/Android/i.test(navigator.userAgent)) {
+        document.querySelectorAll('.external-player-link[data-intent]').forEach(link => {
+            link.href = link.dataset.intent;
+        });
+    }
 
-const android = [
-  ['VLC', 'org.videolan.vlc'],
-  ['MX Player', 'com.mxtech.videoplayer.ad'],
-  ['Just Player', 'com.brouken.player'],
-  ['mpv', 'is.xyz.mpv'],
-  ['Kodi', 'org.xbmc.kodi']
-];
-android.forEach(([n,p]) => addPlayer('mobile-grid', n, androidIntent(STREAM_URL,p, INTENT_MIME)));
-addPlayer('mobile-grid','Copy URL', '#');
-addPlayer('tablet-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc',INTENT_MIME));
-addPlayer('tablet-grid','MX Player', androidIntent(STREAM_URL,'com.mxtech.videoplayer.ad',INTENT_MIME));
-addPlayer('tablet-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player',INTENT_MIME));
-addPlayer('tablet-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi',INTENT_MIME));
+    async function loadTracks() {
+        const status = document.getElementById('track-status');
+        const count = document.getElementById('audio-count-text');
+        try {
+            const response = await fetch('/api/tracks/' + encodeURIComponent(SHORT_CODE), {cache: 'no-store'});
+            if (!response.ok) throw new Error('Track scan failed (' + response.status + ')');
+            const data = await response.json();
+            const tracks = Array.isArray(data.audio_tracks) ? data.audio_tracks : [];
+            count.textContent = tracks.length + (tracks.length === 1 ? ' track' : ' tracks');
 
-addPlayer('desktop-grid','Open stream URL', STREAM_URL);
-addPlayer('desktop-grid','Copy URL', '#');
+            // Default to first (or marked default) track, remuxed to AAC for browser playback.
+            const defaultTrack = tracks.find(track => track.default) || tracks[0];
+            currentAudioTrack = defaultTrack ? Number(defaultTrack.audio_index) : -1;
+            source.src = REMUX_BASE + '?audio=' + currentAudioTrack;
+            source.type = 'video/mp4';
+            video.load();
 
-addPlayer('tv-grid','VLC', androidIntent(STREAM_URL,'org.videolan.vlc',INTENT_MIME));
-addPlayer('tv-grid','Kodi', androidIntent(STREAM_URL,'org.xbmc.kodi',INTENT_MIME));
-addPlayer('tv-grid','Just Player', androidIntent(STREAM_URL,'com.brouken.player',INTENT_MIME));
-addPlayer('tv-grid','Open URL', STREAM_URL);
+            if (tracks.length > 1) {
+                const container = document.getElementById('track-selector-container');
+                const select = document.getElementById('audio-track-select');
+                select.replaceChildren();
+                tracks.forEach((track, index) => {
+                    const option = document.createElement('option');
+                    option.value = String(track.audio_index);
+                    option.textContent = track.label || ('Audio track ' + (index + 1));
+                    if (track.default) option.selected = true;
+                    select.appendChild(option);
+                });
+                select.value = String(currentAudioTrack);
+                container.classList.add('visible');
+                document.getElementById('track-badge').style.display = 'inline-flex';
+                document.getElementById('track-badge-text').textContent = tracks.length + ' tracks';
+                select.addEventListener('change', () => switchAudioTrack(Number(select.value)));
+                status.textContent = 'Select your preferred audio language. Tracks are converted to AAC for browser compatibility.';
+            } else if (tracks.length === 1) {
+                status.textContent = 'One audio track detected: ' + (tracks[0].label || 'Default track') + '.';
+            } else {
+                status.textContent = 'No audio track detected. Playing video-only when possible.';
+            }
+        } catch (error) {
+            console.error(error);
+            count.textContent = 'Unavailable';
+            status.textContent = 'Could not inspect audio tracks. Try an external player — it reads the original media.';
+            source.src = ORIGINAL_SRC;
+            source.type = '';
+            video.load();
+        }
+    }
 
-document.querySelectorAll('.pbtn[href="#"]').forEach(b=>b.addEventListener('click', e=>{e.preventDefault();copyStream()}));
+    function switchAudioTrack(index) {
+        if (!Number.isInteger(index) || index < 0 || index === currentAudioTrack) return;
+        currentAudioTrack = index;
+        player.pause();
+        source.src = REMUX_BASE + '?audio=' + index;
+        source.type = 'video/mp4';
+        video.load();
+        document.getElementById('track-status').textContent = 'Switched audio track. Playback restarts from the beginning.';
+    }
 
-document.querySelectorAll('.tab').forEach(tab=>{
-  tab.addEventListener('click',()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    document.querySelectorAll('.player-panel').forEach(x=>x.classList.remove('active'));
-    tab.classList.add('active'); document.getElementById(tab.dataset.tab).classList.add('active');
-  });
-});
+    function copyLink() {
+        const url = window.location.href;
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(url).then(() => alert('Watch link copied!'));
+        } else {
+            const field = document.createElement('textarea');
+            field.value = url;
+            document.body.appendChild(field);
+            field.select();
+            document.execCommand('copy');
+            field.remove();
+            alert('Watch link copied!');
+        }
+    }
 
-async function copyStream(){
-  try { await navigator.clipboard.writeText(STREAM_URL); document.getElementById('copy-status').textContent='Stream URL copied.'; }
-  catch(e){ window.prompt('Copy stream URL:', STREAM_URL); }
-}
-
-async function loadTracks(){
-  try{
-    const r=await fetch('/api/tracks/{{ file.short_code }}',{headers:{'Accept':'application/json'}});
-    if(!r.ok)return;
-    const d=await r.json(), tracks=d.audio_tracks||[];
-    if(tracks.length<2)return;
-    const box=document.getElementById('track-box'), sel=document.getElementById('audio-select');
-    box.style.display='flex'; sel.innerHTML='';
-    tracks.forEach(t=>{const o=document.createElement('option');o.value=t.audio_index;o.textContent=t.label||`Track ${t.audio_index+1}`;sel.appendChild(o)});
-    sel.addEventListener('change',()=>switchAudio(Number(sel.value)));
-  }catch(e){console.debug('Track discovery unavailable',e)}
-}
-async function switchAudio(index){
-  const wasPlaying=!player.paused, time=player.currentTime;
-  const src=REMUX_URL+'?audio='+encodeURIComponent(index);
-  player.src=src; document.getElementById('track-status').textContent='Preparing selected audio…';
-  try{await player.play();}catch(e){}
-  player.addEventListener('loadedmetadata',()=>{try{player.currentTime=time}catch(e){};if(wasPlaying)player.play().catch(()=>{});document.getElementById('track-status').textContent='Selected audio';},{once:true});
-}
-// Browser-side amplification: native media volume remains available as the base level.
-let audioContext, gainNode, compressor, boost = 1, brightness = 1;
-const boostInput = document.getElementById('volume-boost');
-const brightnessInput = document.getElementById('brightness');
-const gestureHint = document.getElementById('gesture-hint');
-let hintTimer;
-function showGesture(text, side) {
-  document.getElementById(side === 'left' ? 'brightness-label' : 'volume-label').textContent = text;
-  gestureHint.classList.add('show'); clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => gestureHint.classList.remove('show'), 850);
-}
-async function setupAudioBoost() {
-  if (audioContext) { if (audioContext.state === 'suspended') await audioContext.resume(); return; }
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) throw new Error('Web Audio unavailable');
-    audioContext = new Ctx();
-    const source = audioContext.createMediaElementSource(player);
-    gainNode = audioContext.createGain();
-    compressor = audioContext.createDynamicsCompressor();
-    compressor.threshold.value = -8; compressor.knee.value = 18;
-    compressor.ratio.value = 8; compressor.attack.value = 0.003; compressor.release.value = 0.22;
-    source.connect(gainNode); gainNode.connect(compressor); compressor.connect(audioContext.destination);
-    await audioContext.resume(); updateGain();
-  } catch (err) { console.warn('Volume boost unavailable in this browser', err); }
-}
-function updateGain() {
-  const base = Number(player.volume);
-  if (gainNode && audioContext) gainNode.gain.setTargetAtTime(boost * base, audioContext.currentTime, 0.04);
-  document.getElementById('volume-value').textContent = `${Math.round(boost * 100)}%`;
-  document.getElementById('volume-label').textContent = `Volume ${Math.round(boost * 100)}%`;
-}
-function updateBrightness() {
-  player.style.filter = `brightness(${brightness})`;
-  document.getElementById('brightness-value').textContent = `${Math.round(brightness * 100)}%`;
-  document.getElementById('brightness-label').textContent = `Brightness ${Math.round(brightness * 100)}%`;
-}
-boostInput.addEventListener('input', async () => { await setupAudioBoost(); boost = Number(boostInput.value) / 100; updateGain(); });
-brightnessInput.addEventListener('input', () => { brightness = Number(brightnessInput.value) / 100; updateBrightness(); });
-player.addEventListener('volumechange', updateGain);
-player.addEventListener('play', setupAudioBoost, {once:true});
-
-let gestureStart = null;
-player.addEventListener('pointerdown', e => {
-  if (e.pointerType !== 'touch') return;
-  const bounds = player.getBoundingClientRect();
-  if (e.clientY > bounds.bottom - 48) return;
-  const rect = player.getBoundingClientRect();
-  gestureStart = {x:e.clientX, y:e.clientY, side:e.clientX < rect.left + rect.width / 2 ? 'left' : 'right'};
-}, {passive:true});
-player.addEventListener('pointerup', async e => {
-  if (!gestureStart || e.pointerType !== 'touch') return;
-  const dx = e.clientX - gestureStart.x, dy = e.clientY - gestureStart.y;
-  const side = gestureStart.side; gestureStart = null;
-  if (Math.abs(dy) < 28 || Math.abs(dy) < Math.abs(dx) * 1.2) return;
-  const delta = dy < 0 ? 10 : -10;
-  if (side === 'right') {
-    await setupAudioBoost();
-    boost = Math.max(1, Math.min(3, boost + delta / 100));
-    boostInput.value = String(Math.round(boost * 100)); updateGain();
-    showGesture(`Volume ${Math.round(boost * 100)}%`, 'right');
-  } else {
-    brightness = Math.max(0.5, Math.min(1.5, brightness + delta / 100));
-    brightnessInput.value = String(Math.round(brightness * 100)); updateBrightness();
-    showGesture(`Brightness ${Math.round(brightness * 100)}%`, 'left');
-  }
-}, {passive:true});
-player.addEventListener('pointercancel', () => { gestureStart = null; }, {passive:true});
-updateBrightness(); updateGain();
-loadTracks();
+    loadTracks();
 </script>
 {% endblock %}
