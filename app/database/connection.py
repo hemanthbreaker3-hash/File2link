@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     BASE_URL: str = "http://localhost:8000"
     DEFAULT_EXPIRY: int = 24
     CHANNEL_ID: Optional[int] = None
+    UPDATE_CHANNEL_URL: str = "https://t.me/HiTLERYT"
     PORT: int = 8000
     DEBUG: bool = False
     SESSIONS: str = ""

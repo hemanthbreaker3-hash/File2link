@@ -71,7 +71,7 @@ async def health():
 
 @app.get("/")
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
 
 @app.get("/watch/{short_code}")
 async def watch_page(request: Request, short_code: str):
@@ -79,11 +79,15 @@ async def watch_page(request: Request, short_code: str):
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
-    return templates.TemplateResponse("watch.html", {
-        "request": request,
-        "file": file_data,
-        "base_url": settings.BASE_URL.rstrip('/')
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="watch.html",
+        context={
+            "request": request,
+            "file": file_data,
+            "base_url": settings.BASE_URL.rstrip("/"),
+        },
+    )
 
 @app.get("/dl/{short_code}")
 @app.get("/stream/{short_code}")

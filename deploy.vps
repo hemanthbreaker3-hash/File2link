@@ -163,7 +163,75 @@ for _ in $(seq 1 90); do
   if curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then
     info "Web health check passed."
     "${COMPOSE[@]}" ps
-    info "Deployment command completed. Check Telegram /start and public BASE_URL separately."
+
+    # Install Cloudflare Quick Tunnel and manage it with systemd. The helper
+    # automatically captures the trycloudflare URL, stores BASE_URL in .env
+    # and MongoDB, then recreates the web service to apply it.
+    info "Installing/verifying Cloudflare Tunnel..."
+    if [[ ! -x /usr/local/bin/cloudflared ]]; then
+      ARCH="$(uname -m)"
+      case "$ARCH" in
+        x86_64) CF_ARCH=amd64 ;;
+        aarch64|arm64) CF_ARCH=arm64 ;;
+        *) die "Unsupported CPU architecture for cloudflared: $ARCH" ;;
+      esac
+      curl --fail --location --show-error --retry 3 --retry-delay 2 \
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
+        --output /tmp/file2link-cloudflared || die "Could not download cloudflared. Check GitHub access/DNS."
+      MAGIC="$(od -An -tx1 -N4 /tmp/file2link-cloudflared | tr -d ' \n')"
+      [[ "$MAGIC" == "7f454c46" ]] || die "cloudflared download is not a valid Linux ELF executable."
+      run_root install -m 0755 /tmp/file2link-cloudflared /usr/local/bin/cloudflared
+      rm -f /tmp/file2link-cloudflared
+    fi
+    /usr/local/bin/cloudflared --version || die "cloudflared installation verification failed."
+
+    run_root install -m 0755 "$SCRIPT_DIR/cloudflare-quick-tunnel.sh" /usr/local/sbin/file2link-cloudflare-quick-tunnel
+    UNIT_TMP="$(mktemp)"
+    cat > "$UNIT_TMP" <<UNIT
+[Unit]
+Description=File2link Cloudflare Quick Tunnel (automatic URL synchronization)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=$SCRIPT_DIR
+Environment=PORT=$PORT_VALUE
+ExecStart=/usr/local/sbin/file2link-cloudflare-quick-tunnel
+Restart=always
+RestartSec=10
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    run_root install -m 0644 "$UNIT_TMP" /etc/systemd/system/file2link-cloudflared.service
+    rm -f "$UNIT_TMP"
+    run_root systemctl daemon-reload
+    run_root systemctl enable file2link-cloudflared.service >/dev/null
+    run_root systemctl restart file2link-cloudflared.service || die "Could not start the Cloudflare Quick Tunnel service. Check: sudo journalctl -u file2link-cloudflared -n 100 --no-pager"
+
+    info "Waiting for Cloudflare to generate and synchronize your HTTPS URL..."
+    TUNNEL_LOG="$SCRIPT_DIR/cloudflared-quick-tunnel.log"
+    TUNNEL_URL=""
+    for _ in $(seq 1 120); do
+      if [[ -f "$TUNNEL_LOG" ]]; then
+        TUNNEL_URL="$(grep -Eo 'https://[[:alnum:]-]+\.trycloudflare\.com' "$TUNNEL_LOG" | tail -n 1 || true)"
+      fi
+      if [[ -n "$TUNNEL_URL" ]] && curl -fsS "http://127.0.0.1:${PORT_VALUE}/health" >/dev/null 2>&1; then break; fi
+      sleep 2
+    done
+    if [[ -z "$TUNNEL_URL" ]]; then
+      warn "Cloudflare did not produce a URL within 240 seconds. Deployment is running, but public links are not configured yet."
+      warn "Inspect: sudo journalctl -u file2link-cloudflared -n 100 --no-pager"
+      warn "You can retry with: sudo systemctl restart file2link-cloudflared"
+    else
+      info "Cloudflare Quick Tunnel URL: $TUNNEL_URL"
+      info "BASE_URL has been synchronized to .env and MongoDB; new Telegram links will use this URL."
+      info "Tunnel service is enabled at boot and will resynchronize the URL after a VPS reboot."
+    fi
+    info "Deployment command completed."
     exit 0
   fi
   sleep 2

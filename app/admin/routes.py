@@ -31,18 +31,22 @@ async def admin_dashboard(request: Request, _: bool = Depends(is_admin)):
     cpu_usage = psutil.cpu_percent()
     ram_usage = psutil.virtual_memory().percent
     
-    return templates.TemplateResponse("admin/dashboard.html", {
-        "request": request,
-        "total_users": total_users,
-        "total_files": total_files,
-        "cpu": cpu_usage,
-        "ram": ram_usage
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/dashboard.html",
+        context={
+            "request": request,
+            "total_users": total_users,
+            "total_files": total_files,
+            "cpu": cpu_usage,
+            "ram": ram_usage,
+        },
+    )
 
 @router.get("/users")
 async def admin_users(request: Request, _: bool = Depends(is_admin)):
     users = await users_col.find().to_list(100)
-    return templates.TemplateResponse("admin/users.html", {"request": request, "users": users})
+    return templates.TemplateResponse(request=request, name="admin/users.html", context={"request": request, "users": users})
 
 @router.get("/files")
 async def admin_files(request: Request, q: str = None, _: bool = Depends(is_admin)):
@@ -51,7 +55,7 @@ async def admin_files(request: Request, q: str = None, _: bool = Depends(is_admi
         query = {"filename": {"$regex": __import__("re").escape(q), "$options": "i"}}
     
     files = await files_col.find(query).sort("created_at", -1).to_list(100)
-    return templates.TemplateResponse("admin/files.html", {"request": request, "files": files, "query": q})
+    return templates.TemplateResponse(request=request, name="admin/files.html", context={"request": request, "files": files, "query": q})
 
 @router.post("/files/delete/{short_code}")
 async def delete_file(request: Request, short_code: str, _: bool = Depends(is_admin)):

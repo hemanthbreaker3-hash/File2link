@@ -2,13 +2,13 @@ from telethon import events, Button
 from app.streamer.manager import session_manager
 from app.database.connection import files_col, users_col, settings_col, settings
 from app.models.schemas import FileMetadata, User
-from app.utils.helpers import generate_short_code, format_bytes
+from app.utils.helpers import generate_short_code, format_bytes, normalize_public_base_url
 from app.utils.fsub import is_user_fsubbed
 from app.utils.rate_limit import check_rate_limit
 import datetime
 import mimetypes
 import logging
-from urllib.parse import urlparse
+import html
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +72,8 @@ def register_handlers(bot):
         if not await is_user_fsubbed(bot, user_id):
             return await event.respond(
                 "🔒 **Access Restricted**\n\n"
-                "> You must join our official updates channel to use this bot.\n"
-                "> Please join using the link below and try again."
+                "> Join our official updates channel, then send /start again.",
+                buttons=[[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]],
             )
 
         first_name = getattr(sender, 'first_name', None) or "User"
@@ -87,12 +87,8 @@ def register_handlers(bot):
             f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*"
         )
 
-        buttons = []
-        if settings.FORCE_SUB_CHANNELS:
-            ch_id = settings.FORCE_SUB_CHANNELS.split(',')[0].strip().replace("-100", "")
-            buttons.append([Button.url("📢 Join Updates Channel", f"https://t.me/{ch_id}")])
-
-        await event.respond(start_text, buttons=buttons if buttons else None)
+        buttons = [[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]]
+        await event.respond(start_text, buttons=buttons)
 
     @bot.on(events.NewMessage(func=lambda e: e.media))
     async def media_handler(event):
@@ -124,7 +120,8 @@ def register_handlers(bot):
         if not await is_user_fsubbed(bot, event.sender_id):
             return await event.reply(
                 "🔒 **Access Restricted**\n\n"
-                "> Please join our official channels to unlock file conversion."
+                "> Join our official updates channel, then upload your file again.",
+                buttons=[[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]],
             )
 
         media = event.media
@@ -174,72 +171,105 @@ def register_handlers(bot):
         
         await files_col.insert_one(file_meta.dict())
         
-        base_url = settings.BASE_URL.rstrip('/')
-        if not base_url.startswith(('http://', 'https://')):
-            base_url = f"http://{base_url}"
+        # Telegram rejects localhost/private URLs in inline buttons. Require a public URL.
+        try:
+            base_url = normalize_public_base_url(settings.BASE_URL)
+            links_ready = True
+        except ValueError as exc:
+            logger.warning("Public BASE_URL is not configured; generated media links are paused: %s", exc)
+            base_url = None
+            links_ready = False
 
-        download_url = f"{base_url}/dl/{short_code}"
-        stream_url = f"{base_url}/watch/{short_code}"
-        
         formatted_size = format_bytes(file_size) if file_size else "N/A"
+        safe_name = html.escape(file_name)
+        safe_mime = html.escape(mime_type)
 
-        caption = (
-            f"💎 **Media Link Generated**\n\n"
-            f"> 📂 **File Name:** `{file_name}`\n"
-            f"> 📦 **File Size:** `{formatted_size}`\n"
-            f"> ⚙️ **MIME Type:** `{mime_type}`\n\n"
-            f"🚀 **Fast Links:**\n"
-            f"> ⚡ [Direct Download]({download_url})\n"
-            f"> 🍿 [Stream Online]({stream_url})"
-        )
+        if links_ready:
+            download_url = f"{base_url}/dl/{short_code}"
+            stream_url = f"{base_url}/watch/{short_code}"
+            caption = (
+                "💎 <b>Media Links Generated</b>\n\n"
+                f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
+                f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
+                f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
+                "🚀 <b>Fast Links</b>\n"
+                f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>\n"
+                f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n\n"
+                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+            )
+            user_buttons = [
+                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+                [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())],
+            ]
+            channel_buttons = [
+                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+            ]
+        else:
+            caption = (
+                "💎 <b>File Received Successfully</b>\n\n"
+                f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
+                f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
+                f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
+                "⚠️ <b>Download and streaming links are not active yet.</b>\n"
+                "The administrator must set a public HTTPS address using <code>/baseurl https://your-public-domain</code>.\n\n"
+                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+            )
+            user_buttons = [
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+                [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())],
+            ]
+            channel_buttons = [[Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)]]
 
-        # Delete status message
+        # Delete status message after metadata and links have been prepared.
         try:
             await detecting_msg.delete()
         except Exception as e:
-            logger.error(f"Error deleting detecting message: {e}")
+            logger.warning("Could not delete media status message: %s", e)
 
-        user_buttons = [
-            [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
-            [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())]
-        ]
-
-        # Send file with formatted caption to user
+        # Send the original file together with its download/stream links and inline buttons.
         try:
             await bot.send_file(
                 event.chat_id,
                 file=event.media,
                 caption=caption,
+                parse_mode="html",
                 buttons=user_buttons,
-                reply_to=event.id
+                reply_to=event.id,
             )
         except Exception as e:
-            logger.error(f"Error sending file with buttons: {e}")
+            logger.exception("Error sending file with inline buttons: %s", e)
+            # Keep the media delivery working even if Telegram rejects a button.
             try:
                 await bot.send_file(
                     event.chat_id,
                     file=event.media,
                     caption=caption,
-                    reply_to=event.id
+                    parse_mode="html",
+                    buttons=[[Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)]],
+                    reply_to=event.id,
+                )
+                await event.reply(
+                    "⚠️ The file was sent, but Telegram rejected one or more action buttons. "
+                    "Please verify the public BASE_URL with /baseurl."
                 )
             except Exception as e2:
-                logger.error(f"Error sending file: {e2}")
-                await event.reply(caption)
+                logger.exception("Error sending file fallback: %s", e2)
+                await event.reply(caption, parse_mode="html")
 
-        # Re-send file with caption to channel
+        # Mirror the file to the configured numeric log channel, with the same working links.
         if settings.CHANNEL_ID and settings.CHANNEL_ID != event.chat_id:
-            channel_buttons = [
-                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)]
-            ]
             try:
                 await bot.send_file(
                     settings.CHANNEL_ID,
                     file=event.media,
                     caption=caption,
-                    buttons=channel_buttons
+                    parse_mode="html",
+                    buttons=channel_buttons,
                 )
             except Exception as e:
-                logger.error(f"Error sending file to channel: {e}")
+                logger.exception("Error sending file to configured log channel: %s", e)
 
     @bot.on(events.CallbackQuery())
     async def global_callback_check(event):
@@ -282,16 +312,22 @@ def register_handlers(bot):
         if len(args) < 2:
             return await event.reply(
                 "🌐 **Base URL Management**\n\n"
-                f"> 🔗 **Current Base URL:** `{settings.BASE_URL}`\n\n"
-                "⚠️ **Usage:** `/baseurl https://your-domain.com`"
+                f"> 🔗 **Current Base URL:** `{settings.BASE_URL}`\n"
+                f"> 📢 **Updates Channel:** `{settings.UPDATE_CHANNEL_URL}`\n\n"
+                "⚠️ **Usage:** `/baseurl https://your-public-domain.com`"
             )
 
-        new_url = args[1].strip().rstrip('/')
-        if not new_url.startswith(('http://', 'https://')):
+        new_url = args[1].strip()
+        if not new_url.startswith(("http://", "https://")):
             new_url = f"https://{new_url}"
-        parsed = urlparse(new_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-            return await event.reply("❌ Invalid URL. Use a public URL such as `/baseurl https://example.com`.")
+        try:
+            new_url = normalize_public_base_url(new_url)
+        except ValueError as exc:
+            return await event.reply(
+                "❌ **Invalid public Base URL**\n\n"
+                f"> {html.escape(str(exc))}\n\n"
+                "Use your Cloudflare try URL, for example: `/baseurl https://name.trycloudflare.com`"
+            )
 
         try:
             await settings_col.update_one(

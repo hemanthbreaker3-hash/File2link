@@ -20,3 +20,8 @@ were posted in chat. Use the rotated values at the hidden prompts.
 No script can guarantee 100% success: GitHub access, VPS DNS/network, Atlas IP
 allowlist, credentials, Telegram bot permissions and public BASE_URL are external
 requirements. The script performs preflight validation and prints logs on failure.
+
+After deployment, deploy.vps automatically installs and starts a Cloudflare Quick Tunnel. It prints the generated trycloudflare.com URL and synchronizes BASE_URL into .env and MongoDB. The systemd service `file2link-cloudflared` repeats this synchronization after VPS reboot. Check it with:
+
+  sudo systemctl status file2link-cloudflared --no-pager
+  sudo journalctl -u file2link-cloudflared -n 100 --no-pager

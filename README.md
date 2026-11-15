@@ -112,58 +112,29 @@ The base URL is stored in MongoDB and loaded at application startup. Newly gener
 
 Put the app behind Nginx, Caddy or another TLS reverse proxy. Forward requests to `127.0.0.1:8000`, preserve the `Range` and `Host` headers, and allow long-lived streaming responses. Do not buffer large streaming responses at the proxy.
 
-## Get a public HTTPS URL with Cloudflare Tunnel
+## Automatic public HTTPS URL with Cloudflare Quick Tunnel
 
-If you don't have a domain yet, or just want a quick HTTPS URL to put in `BASE_URL` for testing, [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (`cloudflared`) can expose the local service without any DNS setup or open ports.
+`./deploy.vps` now installs `cloudflared` automatically after the web health check and creates a systemd service named `file2link-cloudflared`. The deployment waits for Cloudflare to issue a `https://*.trycloudflare.com` URL, writes it to `.env`, stores it in MongoDB (`settings` collection, key `base_url`), and recreates the web container so the bot immediately uses it for newly generated download and watch buttons.
 
-**Quick tunnel (fastest, temporary URL):**
+The service starts again after VPS reboot. If Cloudflare issues a different Quick Tunnel URL after a reboot or service restart, the helper automatically updates `.env` and MongoDB and restarts the web container to apply the new URL.
 
-1. Install `cloudflared` on the VPS:
+Useful commands:
 
-   ```bash
-   curl -fsSL https://pkg.cloudflare.com/cloudflared-ascii.sh | sudo bash 2>/dev/null; \
-   sudo apt-get update -qq && sudo apt-get install -y cloudflared
-   ```
+```bash
+# Show the current generated URL
+sudo grep '^BASE_URL=' .env
 
-   (See [Cloudflare's install docs](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) if your distro isn't Debian/Ubuntu-based.)
+# Follow tunnel logs / troubleshoot URL generation
+sudo journalctl -u file2link-cloudflared -f
 
-2. With the stack already running (`./deploy.vps`), start a quick tunnel pointed at the app's port:
+# Restart the tunnel (a new temporary URL may be generated)
+sudo systemctl restart file2link-cloudflared
 
-   ```bash
-   cloudflared tunnel --url http://localhost:8000
-   ```
+# Check service status
+sudo systemctl status file2link-cloudflared --no-pager
+```
 
-3. `cloudflared` prints a random URL that looks like `https://random-words-1234.trycloudflare.com`. That's your public HTTPS URL.
-4. Set it as `BASE_URL` — either update `config.env`/`.env` and rerun `./deploy.vps`, or just send `/baseurl https://random-words-1234.trycloudflare.com` to the bot (no restart needed; see [Bot commands](#bot-commands)).
-
-Quick tunnels are meant for testing: the URL changes every time you restart `cloudflared`, and there's no uptime guarantee. Keep the `cloudflared tunnel --url ...` command running (e.g. in `tmux`, `screen`, or as a `systemd` service) for as long as you want the URL to stay valid.
-
-**Named tunnel (stable URL tied to your own domain):**
-
-If you own a domain on Cloudflare and want a URL that doesn't change:
-
-1. Authenticate and create a named tunnel:
-
-   ```bash
-   cloudflared tunnel login
-   cloudflared tunnel create file2link
-   ```
-
-2. Route a hostname on your domain to it:
-
-   ```bash
-   cloudflared tunnel route dns file2link stream.yourdomain.com
-   ```
-
-3. Run it pointed at the app:
-
-   ```bash
-   cloudflared tunnel --url http://localhost:8000 run file2link
-   ```
-
-4. Set `BASE_URL=https://stream.yourdomain.com` and rerun `./deploy.vps` (or set it via `/baseurl`).
-
-Either way, Cloudflare terminates TLS and proxies to the VPS, so you don't need Nginx/Caddy or a separate certificate for this path — only use the [Reverse proxy](#reverse-proxy) section above if you're not using Cloudflare Tunnel.
+Quick Tunnels are temporary and intended for testing: their URL can change after a restart, and Cloudflare does not provide an uptime guarantee for them. The File2link service automatically synchronizes the new URL, but links already shared with users using an old URL will not be rewritten. For production, use a named Cloudflare Tunnel with a hostname on your own domain.
 
 ## Maintenance
 
@@ -186,3 +157,9 @@ pytest -q
 ```
 
 For a production acceptance test, additionally verify bot authentication, uploading a test file, generated link opening, HTTP range seeking, full download, Android player launches, audio-track remuxing, `/baseurl` persistence after restart, and concurrent playback from separate devices. A successful image build or `/health` response alone does not prove every Telegram or client-device feature works.
+
+## Public Base URL and Telegram file buttons
+
+Set `BASE_URL` to a publicly reachable URL before users upload files. For Cloudflare Quick Tunnel, run `cloudflared tunnel --url http://127.0.0.1:8000`, then send the generated URL to the bot with `/baseurl https://YOUR-NAME.trycloudflare.com`. The bot validates the URL and uses it for the Direct Download (`/dl/`) and Watch Online (`/watch/`) buttons attached to the uploaded file message. `localhost` and private IP addresses are intentionally rejected because Telegram users cannot reach them.
+
+The update-channel buttons point to `https://t.me/HiTLERYT`. `CHANNEL_ID` remains a numeric Telegram chat ID for private logging/file mirroring; it must not be replaced with a public URL.

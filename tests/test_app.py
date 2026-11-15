@@ -59,3 +59,4 @@ def test_channel_id_parsing_with_comments():
         CHANNEL_ID="# For log storage (optional)"
     )
     assert test_settings_only_comment.CHANNEL_ID is None
+
