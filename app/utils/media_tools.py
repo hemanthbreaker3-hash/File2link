@@ -1,4 +1,4 @@
-"""FFmpeg helpers for /ss screenshots and /sv sample clips."""
+"""FFmpeg helpers for /ss and /sv — prefer HTTP URL (no full download)."""
 from __future__ import annotations
 
 import asyncio
@@ -30,14 +30,20 @@ async def _run(cmd: list[str], timeout: float = 300.0) -> tuple[int, bytes, byte
     return proc.returncode or 0, out or b"", err or b""
 
 
-async def probe_duration(path: str) -> float:
+def local_tg_stream_url(chat_id: int, message_id: int, port: int | None = None) -> str:
+    """URL handled by FastAPI /_tgstream — mediainfo/ffmpeg use Range requests."""
+    p = port or int(os.environ.get("PORT", "8000"))
+    return f"http://127.0.0.1:{p}/_tgstream/{chat_id}/{message_id}"
+
+
+async def probe_duration(source: str) -> float:
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration",
         "-of", "default=noprint_wrappers=1:nokey=1",
-        path,
+        source,
     ]
-    code, out, err = await _run(cmd, timeout=60)
+    code, out, err = await _run(cmd, timeout=90)
     if code != 0:
         logger.warning("ffprobe duration failed: %s", err.decode(errors="replace")[-400:])
         return 0.0
@@ -48,35 +54,34 @@ async def probe_duration(path: str) -> float:
 
 
 async def download_message_media(client, message, dest_path: str) -> str:
-    """Download message media to dest_path via wzgram."""
+    """Fallback full download (large files / when URL probe fails)."""
     path = await client.download_media(message, file_name=dest_path)
     if not path or not os.path.exists(path):
         raise RuntimeError("download_media failed")
     return str(path)
 
 
-async def generate_screenshots(input_path: str, count: int, out_dir: str) -> List[str]:
-    """Evenly spaced JPEG screenshots. Returns list of file paths."""
+async def generate_screenshots(source: str, count: int, out_dir: str) -> List[str]:
+    """Evenly spaced JPEG screenshots from URL or local path (no full file required for URL)."""
     count = max(1, min(int(count), 30))
-    duration = await probe_duration(input_path)
+    duration = await probe_duration(source)
     if duration <= 0:
-        # fallback: single frame at start
         duration = 1.0
 
     paths: List[str] = []
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    # Avoid exact 0 and exact end (some containers fail at eof)
     for i in range(count):
         if count == 1:
             t = min(0.5, duration * 0.1)
         else:
             t = (duration * (i + 1)) / (count + 1)
         out = os.path.join(out_dir, f"ss_{i + 1:02d}.jpg")
+        # -ss before -i enables input seeking (HTTP Range on our streamer)
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error",
             "-ss", f"{t:.3f}",
-            "-i", input_path,
+            "-i", source,
             "-frames:v", "1",
             "-q:v", "2",
             "-y", out,
@@ -89,21 +94,17 @@ async def generate_screenshots(input_path: str, count: int, out_dir: str) -> Lis
     return paths
 
 
-async def generate_sample_video(input_path: str, seconds: int, out_path: str) -> str:
-    """
-    Create a short sample clip from the start (stream copy when possible).
-    Falls back to re-encode if copy fails.
-    """
+async def generate_sample_video(source: str, seconds: int, out_path: str) -> str:
+    """Sample from start via URL/path — only reads needed ranges when source is HTTP."""
     seconds = max(1, min(int(seconds), 120))
-    duration = await probe_duration(input_path)
+    duration = await probe_duration(source)
     if duration > 0:
         seconds = min(seconds, max(1, int(duration)))
 
-    # Try stream copy first (fast)
     cmd_copy = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-ss", "0",
-        "-i", input_path,
+        "-i", source,
         "-t", str(seconds),
         "-c", "copy",
         "-movflags", "+faststart",
@@ -117,7 +118,7 @@ async def generate_sample_video(input_path: str, seconds: int, out_path: str) ->
     cmd_enc = [
         "ffmpeg", "-hide_banner", "-loglevel", "error",
         "-ss", "0",
-        "-i", input_path,
+        "-i", source,
         "-t", str(seconds),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-b:a", "128k",

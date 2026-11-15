@@ -21,7 +21,10 @@ from app.utils.media_tools import (
     generate_sample_video,
     generate_screenshots,
     make_work_dir,
+    local_tg_stream_url,
 )
+from app.utils.mediainfo_fmt import extract_mediainfo, format_output
+import io
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +100,8 @@ def register_handlers(bot):
             f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*\n"
             f">\n"
             f"> 📸 `/ss` reply to media → screenshots\n"
-            f"> 🎬 `/sv` reply to media → sample video"
+            f"> 🎬 `/sv` reply to media → sample video\n"
+            f"> 📊 `/mi` reply to media → MediaInfo"
         )
         await message.reply(
             start_text,
@@ -557,19 +561,23 @@ def register_handlers(bot):
         status = await callback.message.reply(f"📸 Generating **{count}** screenshot(s)…")
         work = None
         try:
-            src = await client.get_messages(chat_id, msg_id)
-            if isinstance(src, list):
-                src = src[0] if src else None
-            if not src or not _is_media_message(src):
+            src_msg = await client.get_messages(chat_id, msg_id)
+            if isinstance(src_msg, list):
+                src_msg = src_msg[0] if src_msg else None
+            if not src_msg or not _is_media_message(src_msg):
                 return await status.edit_text("❌ Media not found or no longer available.")
 
+            # Stream URL — ffmpeg seeks via Range, no full download
+            source = local_tg_stream_url(chat_id, msg_id)
             work = make_work_dir("ss_")
-            media_path = os.path.join(work, "input.bin")
-            await status.edit_text("⬇️ Downloading media…")
-            await download_message_media(client, src, media_path)
-
-            await status.edit_text(f"🖼️ Extracting {count} frame(s)…")
-            shots = await generate_screenshots(media_path, count, os.path.join(work, "out"))
+            await status.edit_text(f"🖼️ Extracting {count} frame(s) via stream…")
+            shots = await generate_screenshots(source, count, os.path.join(work, "out"))
+            if not shots:
+                # fallback: full download once
+                await status.edit_text("⬇️ Stream seek failed — downloading once…")
+                media_path = os.path.join(work, "input.bin")
+                await download_message_media(client, src_msg, media_path)
+                shots = await generate_screenshots(media_path, count, os.path.join(work, "out2"))
             if not shots:
                 return await status.edit_text("❌ Could not extract screenshots from this file.")
 
@@ -607,20 +615,23 @@ def register_handlers(bot):
         status = await callback.message.reply(f"🎬 Generating **{seconds}s** sample…")
         work = None
         try:
-            src = await client.get_messages(chat_id, msg_id)
-            if isinstance(src, list):
-                src = src[0] if src else None
-            if not src or not _is_media_message(src):
+            src_msg = await client.get_messages(chat_id, msg_id)
+            if isinstance(src_msg, list):
+                src_msg = src_msg[0] if src_msg else None
+            if not src_msg or not _is_media_message(src_msg):
                 return await status.edit_text("❌ Media not found or no longer available.")
 
+            source = local_tg_stream_url(chat_id, msg_id)
             work = make_work_dir("sv_")
-            media_path = os.path.join(work, "input.bin")
             out_path = os.path.join(work, "sample.mp4")
-            await status.edit_text("⬇️ Downloading media…")
-            await download_message_media(client, src, media_path)
-
-            await status.edit_text(f"✂️ Cutting {seconds}s sample…")
-            await generate_sample_video(media_path, seconds, out_path)
+            await status.edit_text(f"✂️ Cutting {seconds}s sample via stream…")
+            try:
+                await generate_sample_video(source, seconds, out_path)
+            except Exception:
+                await status.edit_text("⬇️ Stream cut failed — downloading once…")
+                media_path = os.path.join(work, "input.bin")
+                await download_message_media(client, src_msg, media_path)
+                await generate_sample_video(media_path, seconds, out_path)
 
             await status.edit_text("📤 Uploading sample…")
             await client.send_video(
@@ -634,6 +645,73 @@ def register_handlers(bot):
             logger.exception("sv_callback failed")
             try:
                 await status.edit_text(f"❌ Sample failed: `{e}`")
+            except Exception:
+                pass
+        finally:
+            cleanup_dir(work)
+
+    @bot.on_message(filters.command("mi"))
+    async def mi_command(client, message: Message):
+        """Reply to media -> MediaInfo via stream URL (no full download)."""
+        user = message.from_user
+        if not user or user.is_bot:
+            return
+        if not await is_user_fsubbed(client, user.id):
+            return await message.reply(
+                "🔒 **Access Restricted**\n\n> Join the updates channel first.",
+                reply_markup=_kb([[InlineKeyboardButton("📢 Join Updates Channel", url=settings.UPDATE_CHANNEL_URL)]]),
+            )
+        target = message.reply_to_message
+        if not target or not _is_media_message(target):
+            return await message.reply(
+                "📊 **MediaInfo**\n\n"
+                "> Reply to a **video / audio / document / media** with `/mi`\n"
+                "> to generate a full technical report."
+            )
+
+        status = await message.reply(
+            "🔍 **Extracting MediaInfo…**\n> Probing via stream (no full download)."
+        )
+        work = None
+        try:
+            chat_id = target.chat.id
+            msg_id = target.id
+            source = local_tg_stream_url(chat_id, msg_id)
+            try:
+                data = await extract_mediainfo(source)
+            except Exception:
+                # fallback download
+                await status.edit_text("⬇️ Stream probe failed — downloading once…")
+                work = make_work_dir("mi_")
+                media_path = os.path.join(work, "input.bin")
+                await download_message_media(client, target, media_path)
+                data = await extract_mediainfo(media_path)
+
+            body = format_output(data)
+            media = target.video or target.audio or target.document or target.animation
+            name = getattr(media, "file_name", None) if media else None
+            if not name and target.video:
+                name = "video"
+            name = name or "file"
+
+            header = f"📊 **MediaInfo for** `{name}`\n\n"
+            full = header + f"```\n{body}\n```"
+            if len(full) > 4000:
+                bio = io.BytesIO(body.encode("utf-8"))
+                bio.name = f"{name}.mediainfo.txt"
+                await status.edit_text(
+                    f"📊 **MediaInfo for** `{name}` is long — sending as file…"
+                )
+                await message.reply_document(
+                    document=bio,
+                    caption=f"📊 MediaInfo · `{name}`",
+                )
+            else:
+                await status.edit_text(full)
+        except Exception as e:
+            logger.exception("mi_command failed")
+            try:
+                await status.edit_text(f"❌ **MediaInfo failed:** `{e}`")
             except Exception:
                 pass
         finally:

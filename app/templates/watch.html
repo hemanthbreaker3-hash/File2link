@@ -237,37 +237,72 @@ const FILE_NAME = {{ file.filename|tojson }};
 const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
 const player = document.getElementById('player');
 
-// Fast path: direct multi-connection /stream (range requests, parallel sessions).
-// Compatible path: /remux?aac=1 when audio is silent or user picks another track.
-let useCompatible = false;
+// Browser HTML5 player ALWAYS uses /remux?aac=1 so video+audio work
+// (AC3/DTS/TrueHD/EAC3/PCM often play video with silence in Chrome/Safari/Firefox).
+// External apps (VLC, HV Stream, PLAYit) still use raw STREAM_URL.
+let useCompatible = true;
+let currentAudioIndex = 0;
+let silentWatchTimer = null;
 
 function primaryPlayUrl(audioIndex) {
   const idx = (audioIndex === undefined || audioIndex === null) ? 0 : audioIndex;
-  if (useCompatible) {
-    return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
-  }
-  return STREAM_URL;
+  // Always remux + AAC for in-page player
+  return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
 }
 
-(function initSource() {
-  const src = primaryPlayUrl(0);
+function setPlayerSource(src, mime) {
   const sourceEl = document.getElementById('video-source');
   if (sourceEl) {
     sourceEl.src = src;
-    sourceEl.type = PLAYER_MIME || 'video/mp4';
+    sourceEl.type = mime || 'video/mp4';
   }
+  player.pause();
+  player.removeAttribute('src');
   player.src = src;
+  player.load();
+}
+
+(function initSource() {
+  // Ensure element is not muted and has volume
+  try {
+    player.muted = false;
+    player.defaultMuted = false;
+    player.volume = 1.0;
+  } catch (_) {}
+
+  const src = primaryPlayUrl(0);
+  setPlayerSource(src, 'video/mp4');
+
+  // If still silent after playback starts, nudge user / re-apply volume boost
+  player.addEventListener('playing', function onPlaying() {
+    player.removeEventListener('playing', onPlaying);
+    try { player.muted = false; player.volume = 1.0; } catch (_) {}
+    if (typeof ensureAudioGraph === 'function') {
+      ensureAudioGraph().then(function () {
+        if (typeof applyBoost === 'function') applyBoost();
+      }).catch(function () {});
+    }
+    // Detect possible silence: if after 2.5s still muted flag or volume 0, force unmute
+    if (silentWatchTimer) clearTimeout(silentWatchTimer);
+    silentWatchTimer = setTimeout(function () {
+      try {
+        if (player.muted || player.volume === 0) {
+          player.muted = false;
+          player.volume = 1.0;
+        }
+      } catch (_) {}
+    }, 2500);
+  });
 })();
 
 async function enableCompatibleMode() {
-  if (useCompatible) return;
   useCompatible = true;
   const statusEl = document.getElementById('track-status');
   const box = document.getElementById('track-box');
   if (box) box.style.display = 'flex';
   if (statusEl) {
     statusEl.classList.remove('error');
-    statusEl.textContent = 'Switching to compatible audio…';
+    statusEl.textContent = 'Using compatible AAC audio…';
   }
   await switchAudio(currentAudioIndex || 0);
 }
@@ -352,7 +387,7 @@ async function copyStream() {
 
 /* ---------- Audio track switching (fixed) ---------- */
 let switchingAudio = false;
-let currentAudioIndex = 0;
+currentAudioIndex = 0; // already declared
 
 async function loadTracks() {
   try {
@@ -434,8 +469,13 @@ async function switchAudio(index) {
   const src = REMUX_URL + '?audio=' + encodeURIComponent(index) + '&aac=1';
 
   try {
-    // Change source. Do NOT call play() until the element is ready.
-    player.src = src;
+    // Change source via helper so <source> tag stays in sync.
+    if (typeof setPlayerSource === 'function') {
+      setPlayerSource(src, 'video/mp4');
+    } else {
+      player.src = src;
+      player.load();
+    }
     player.load();
 
     // Wait until enough data is available to seek & play

@@ -199,6 +199,51 @@ async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int
 
 
 
+
+@app.get("/_tgstream/{chat_id}/{message_id}")
+async def internal_tg_stream(request: Request, chat_id: int, message_id: int):
+    """Local-only style stream of a Telegram message media for mediainfo/ffmpeg (Range supported)."""
+    clients = session_manager.get_all_clients()
+    if not clients:
+        raise HTTPException(status_code=503, detail="No Telegram sessions")
+    client = clients[0]
+    try:
+        msg = await client.get_messages(chat_id, message_id)
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if not msg:
+            raise HTTPException(status_code=404, detail="Message not found")
+        media = msg.video or msg.document or msg.audio or msg.animation or msg.voice or msg.video_note
+        if not media and not msg.photo:
+            raise HTTPException(status_code=404, detail="No media")
+        if msg.photo and not media:
+            # photos are small; still stream
+            file_size = msg.photo.file_size or 0
+            filename = f"photo_{message_id}.jpg"
+            mime = "image/jpeg"
+        else:
+            file_size = getattr(media, "file_size", None) or 0
+            filename = getattr(media, "file_name", None) or f"file_{message_id}"
+            mime = getattr(media, "mime_type", None) or "application/octet-stream"
+        if file_size <= 0:
+            raise HTTPException(status_code=422, detail="Unknown file size")
+        return await get_streaming_response(
+            clients=clients,
+            chat_id=chat_id,
+            message_id=message_id,
+            file_size=file_size,
+            filename=filename,
+            mime_type=mime,
+            request=request,
+            chunk_size=settings.STREAM_CHUNK_SIZE,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("internal_tg_stream")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
