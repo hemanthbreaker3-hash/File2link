@@ -662,37 +662,51 @@ def register_handlers(bot):
                 reply_markup=_kb([[InlineKeyboardButton("📢 Join Updates Channel", url=settings.UPDATE_CHANNEL_URL)]]),
             )
         target = message.reply_to_message
-        if not target or not _is_media_message(target):
+        args = (message.text or "").split(maxsplit=1)
+        direct_url = args[1].strip() if len(args) > 1 else ""
+        if direct_url and not direct_url.lower().startswith(("http://", "https://")):
+            return await message.reply("❌ Send a valid downloadable HTTP/HTTPS URL.")
+        if not direct_url and (not target or not _is_media_message(target)):
             return await message.reply(
-                "📊 **MediaInfo**\n\n"
-                "> Reply to a **video / audio / document / media** with `/mi`\n"
-                "> to generate a full technical report."
+                "📊 **MediaInfo**\\n\\n"
+                "> Reply to Telegram media with `/mi`, or send `/mi https://example.com/file.mkv`.\\n"
+                "> Direct downloadable HTTP/HTTPS links are supported."
             )
 
         status = await message.reply(
-            "🔍 **Extracting MediaInfo…**\n> Probing via stream (no full download)."
+            "🔍 **Extracting MediaInfo…**\\n> " +
+            ("Probing downloadable URL (no full download)." if direct_url else "Probing Telegram media via stream.")
         )
         work = None
         try:
-            chat_id = target.chat.id
-            msg_id = target.id
-            source = local_tg_stream_url(chat_id, msg_id)
-            try:
+            if direct_url:
+                from urllib.parse import urlparse, unquote
+                from app.utils.mediainfo_fmt import validate_download_url
+                await validate_download_url(direct_url)
+                source = direct_url
+                raw_name = os.path.basename(urlparse(direct_url).path)
+                name = unquote(raw_name) or "download"
                 data = await extract_mediainfo(source)
-            except Exception:
-                # fallback download
-                await status.edit_text("⬇️ Stream probe failed — downloading once…")
-                work = make_work_dir("mi_")
-                media_path = os.path.join(work, "input.bin")
-                await download_message_media(client, target, media_path)
-                data = await extract_mediainfo(media_path)
+            else:
+                chat_id = target.chat.id
+                msg_id = target.id
+                source = local_tg_stream_url(chat_id, msg_id)
+                try:
+                    data = await extract_mediainfo(source)
+                except Exception:
+                    await status.edit_text("⬇️ Stream probe failed — downloading Telegram media once…")
+                    work = make_work_dir("mi_")
+                    media_path = os.path.join(work, "input.bin")
+                    await download_message_media(client, target, media_path)
+                    data = await extract_mediainfo(media_path)
 
-            body = format_output(data)
-            media = target.video or target.audio or target.document or target.animation
-            name = getattr(media, "file_name", None) if media else None
-            if not name and target.video:
-                name = "video"
-            name = name or "file"
+                media = target.video or target.audio or target.document or target.animation
+                name = getattr(media, "file_name", None) if media else None
+                if not name and target.video:
+                    name = "video"
+                name = name or "file"
+
+            name = name.replace("\\n", " ").replace("\\r", " ")[:180]
 
             header = f"📊 **MediaInfo for** `{name}`\n\n"
             full = header + f"```\n{body}\n```"

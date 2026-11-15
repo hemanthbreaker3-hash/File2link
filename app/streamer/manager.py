@@ -28,8 +28,8 @@ class SessionManager:
             api_hash=settings.API_HASH,
             bot_token=settings.BOT_TOKEN,
             in_memory=True,
-            workers=8,
-            max_concurrent_transmissions=8,
+            workers=16,
+            max_concurrent_transmissions=16,
         )
 
     async def start(self):
@@ -60,8 +60,8 @@ class SessionManager:
                         api_hash=settings.API_HASH,
                         session_string=session_str,
                         in_memory=True,
-                        workers=8,
-                        max_concurrent_transmissions=8,
+                        workers=16,
+                        max_concurrent_transmissions=16,
                         no_updates=True,
                     )
                     await client.start()
@@ -96,7 +96,7 @@ class SessionManager:
             BotCommand("start", "Start / welcome & how to use"),
             BotCommand("ss", "Screenshots — reply to media"),
             BotCommand("sv", "Sample video — reply to media"),
-            BotCommand("mi", "MediaInfo — reply to media"),
+            BotCommand("mi", "MediaInfo — reply to media or pass a download URL"),
             BotCommand("stats", "Bot statistics (admin)"),
             BotCommand("broadcast", "Broadcast message (admin)"),
             BotCommand("ban", "Ban user (admin)"),

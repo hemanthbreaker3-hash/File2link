@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SESSIONS: str = ""
     ADMIN_PANEL_TOKEN: str = ""
-    STREAM_CHUNK_SIZE: int = 1048576
+    STREAM_CHUNK_SIZE: int = 4194304
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=True)
 

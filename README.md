@@ -163,3 +163,27 @@ For a production acceptance test, additionally verify bot authentication, upload
 Set `BASE_URL` to a publicly reachable URL before users upload files. For Cloudflare Quick Tunnel, run `cloudflared tunnel --url http://127.0.0.1:8000`, then send the generated URL to the bot with `/baseurl https://YOUR-NAME.trycloudflare.com`. The bot validates the URL and uses it for the Direct Download (`/dl/`) and Watch Online (`/watch/`) buttons attached to the uploaded file message. `localhost` and private IP addresses are intentionally rejected because Telegram users cannot reach them.
 
 The update-channel buttons point to `https://t.me/HiTLERYT`. `CHANNEL_ID` remains a numeric Telegram chat ID for private logging/file mirroring; it must not be replaced with a public URL.
+
+
+## `/mi` downloadable URL support
+
+Use `/mi` as a reply to a Telegram media message, or pass a direct downloadable URL:
+
+```text
+/mi https://example.com/path/video.mkv
+```
+
+The URL must be a publicly reachable HTTP/HTTPS resource. The command probes the
+remote file directly where the origin supports it; it does not intentionally save
+a complete copy before probing. Some hosts block probing, redirects, or byte-range
+requests, so compatibility depends on the origin server.
+
+## Download throughput tuning
+
+The default streaming response chunk is set to 4 MiB, with up to 12 parallel
+Telegram range parts when the file size and available sessions justify it.
+Configure multiple valid `SESSIONS` to increase concurrent Telegram connections.
+A 2 Gbps (2000 Mbps) throughput is a target, not a guarantee: the VPS NIC,
+provider limits, Telegram/source throughput, session count, CPU, and client
+network all affect real speed. Do not set concurrency higher than your VPS can
+handle; monitor memory and outbound bandwidth.

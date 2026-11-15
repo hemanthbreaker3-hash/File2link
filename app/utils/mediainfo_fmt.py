@@ -5,9 +5,36 @@ import asyncio
 import json
 import logging
 import shutil
+import ipaddress
+import socket
+from urllib.parse import urlparse
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
+
+
+async def validate_download_url(url: str) -> None:
+    """Reject non-HTTP and private/local destinations before probing user-supplied URLs."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only absolute HTTP/HTTPS download URLs are supported.")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs containing embedded credentials are not supported.")
+    host = parsed.hostname.rstrip(".").lower()
+    if host in {"localhost"} or host.endswith((".localhost", ".local", ".internal")):
+        raise ValueError("Local/private download URLs are not allowed.")
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await loop.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80),
+                                           type=socket.SOCK_STREAM)
+            addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
+        except Exception as exc:
+            raise ValueError("Could not resolve the download URL host.") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("Private or reserved network destinations are not allowed.")
 
 
 async def _run(cmd: list[str], timeout: float = 120.0) -> tuple[int, str, str]:
