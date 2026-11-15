@@ -7,7 +7,6 @@ venv/
 
 # Environment
 .env
-config.env
 *.session
 *.session-journal
 
@@ -15,5 +14,3 @@ config.env
 fast_mongodb_data/
 nginx/logs/
 app/static/temp/
-*.pyc
-.pytest_cache/

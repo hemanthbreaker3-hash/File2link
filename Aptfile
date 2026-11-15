@@ -1,2 +1,2 @@
-# Dependencies for Apt buildpack
-# libpulse0 was here but we moved to a dedicated ffmpeg buildpack
+# Required system binaries for audio-track discovery and remuxing
+ffmpeg
