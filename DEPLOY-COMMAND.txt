@@ -1,0 +1,31 @@
+FILE2LINK VPS DEPLOYMENT (copy/paste)
+
+Replace YOUR_FILE2LINK_GITHUB_REPO with the actual GitHub repository URL.
+Use the credentials belonging to your File2link bot/database, not the values
+from any other bot project. Do not publish this command or commit credentials.
+
+rm -rf file2link
+git clone YOUR_FILE2LINK_GITHUB_REPO file2link
+cd file2link
+
+export API_ID="22266643"
+export API_HASH="YOUR_CURRENT_API_HASH"
+export BOT_TOKEN="YOUR_CURRENT_BOT_TOKEN"
+export OWNER_ID="8663988850"
+export ADMINS="5778067019"
+export CHANNEL_ID="-1003553348627"
+export FORCE_SUB_CHANNELS="-1004306981801"
+export MONGODB_URI="YOUR_CURRENT_MONGODB_URI"
+export DATABASE_NAME="file2link"
+
+ls deploy.vps one-click-deploy.sh deploy.sh
+chmod +x deploy.vps one-click-deploy.sh deploy.sh
+./deploy.vps
+
+Notes:
+- The script persists exported variables to a private .env file (mode 600).
+- It also accepts APP_ID as an alias for API_ID, DATABASE_URI/DATABASE_URL
+  as aliases for MONGODB_URI, and LOG_CHANNEL as an alias for CHANNEL_ID.
+- It checks required settings, validates numeric IDs, validates Compose,
+  builds and starts Docker Compose, then waits for /health.
+- Keep .env out of Git. Never put live secrets in a public repository.

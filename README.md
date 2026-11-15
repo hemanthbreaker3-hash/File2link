@@ -26,36 +26,50 @@ Telegram bot and FastAPI web application for creating direct download and browse
 
 ## VPS deployment
 
-1. Extract this project on the VPS and enter the project directory.
-2. Fill in your credentials in `config.env` (API_ID, API_HASH, BOT_TOKEN, OWNER_ID, BASE_URL, etc.):
+### One-command style (Git clone + exported credentials)
 
-   ```bash
-   nano config.env
-   ```
+Clone the repository, enter its directory, export your own File2link credentials, then run `deploy.vps`. The script automatically writes the exported values into a private `.env` file, validates them, builds the Docker image, starts the stack, and waits for the health endpoint.
 
-   `config.env` is a short, dedicated place to fill in just your credentials. You don't need to touch `.env` by hand — `./deploy.vps` reads `config.env` and writes any filled-in values into `.env` for you each time it runs (creating `.env` from `.env.example` first if it doesn't exist yet). Leaving a field blank in `config.env` leaves the existing `.env` value untouched. If you'd rather edit `.env` directly instead, that still works too: `cp .env.example .env && nano .env`.
+```bash
+rm -rf file2link
+git clone YOUR_FILE2LINK_GITHUB_REPO file2link
+cd file2link
 
-   If you don't have `BASE_URL` yet, leave it blank for now — see [Get a public HTTPS URL with Cloudflare Tunnel](#get-a-public-https-url-with-cloudflare-tunnel) below, or set it later with the bot's `/baseurl` command once it's running.
+export API_ID="YOUR_API_ID"
+export API_HASH="YOUR_API_HASH"
+export BOT_TOKEN="YOUR_BOT_TOKEN"
+export OWNER_ID="YOUR_TELEGRAM_USER_ID"
+export ADMINS=""
+export CHANNEL_ID=""
+export FORCE_SUB_CHANNELS=""
+export MONGODB_URI="YOUR_MONGODB_URI"
+export DATABASE_NAME="file2link"
 
-3. Keep `MONGODB_URI=mongodb://mongodb:27017` and `DATABASE_NAME=tg_media_bot` when using the bundled Compose database. Configure `ADMINS` as comma-separated Telegram numeric IDs if needed.
-4. Start the stack:
+ls deploy.vps
+chmod +x deploy.vps
+./deploy.vps
+```
 
-   ```bash
-   chmod +x deploy.vps
-   ./deploy.vps
-   ```
+Replace the placeholders with credentials for this bot and the actual GitHub URL. Do not reuse credentials from another bot. Never commit `.env` or publish live tokens/passwords. The deployment script supports exported variables, `config.env`, or `.env` (precedence: exported shell variables, then `config.env`, then existing `.env`). It also accepts `APP_ID` as an alias for `API_ID`, `DATABASE_URI`/`DATABASE_URL` for `MONGODB_URI`, and `LOG_CHANNEL` for `CHANNEL_ID`.
 
-5. Verify the service:
+Alternatively, after exporting the same variables in your current shell, use the included helper:
 
-   ```bash
-   docker compose ps
-   docker compose logs --tail=100 web
-   curl -fsS http://127.0.0.1:8000/health
-   ```
+```bash
+chmod +x deploy-from-git.sh
+./deploy-from-git.sh YOUR_FILE2LINK_GITHUB_REPO file2link
+```
 
-   A healthy response is `{"status":"ok","service":"HITLER"}`. Use `PORT` if you configured a different port.
+The helper refuses to overwrite an existing directory. If you intentionally want a clean clone, remove that directory first.
 
-The deployment script checks required Telegram settings, builds the image, starts the services, and waits for the health endpoint. It cannot verify your Telegram credentials, DNS, firewall, TLS proxy, or actual playback from a remote Android device; test those separately.
+The script requires Docker Engine and Docker Compose (it installs Docker on supported Linux VPS systems when missing). By default, Compose starts local MongoDB and Redis containers. If `MONGODB_URI` points to MongoDB Atlas, the app uses that external database URI; the bundled MongoDB service remains available but is not the configured application database. Verify the deployment with:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 web
+curl -fsS http://127.0.0.1:8000/health
+```
+
+The health check confirms the web process is responding; it does not prove Telegram authorization, Atlas network access, DNS, firewall, TLS, or end-to-end playback.
 
 ## Configuration
 
