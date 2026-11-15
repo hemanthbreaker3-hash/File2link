@@ -183,10 +183,12 @@ async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int
     if audio < 0 or audio > 32:
         raise HTTPException(status_code=400, detail="Invalid audio track")
 
-    client = session_manager.get_client()
+    clients = session_manager.get_all_clients()
+    if not clients:
+        raise HTTPException(status_code=503, detail="Telegram sessions are unavailable")
     try:
         return await get_remux_response(
-            client=client,
+            clients=clients,
             chat_id=file_data["chat_id"],
             message_id=file_data["message_id"],
             file_size=file_data["file_size"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Optional
 
 from wzgram import Client
@@ -44,7 +45,16 @@ class SessionManager:
         logger.info("HITLER bot client started (wzgram)")
         await self.register_bot_commands()
 
-        session_strings = [s.strip() for s in settings.SESSIONS.split(",") if s.strip()]
+        # Accept comma-, semicolon-, or newline-separated exported sessions.
+        # Strip optional surrounding quotes and ignore blank/comment lines.
+        raw_sessions = str(settings.SESSIONS or "").strip()
+        session_strings = [
+            item.strip().strip("\'\"")
+            for item in re.split(r"[,;\r\n]+", raw_sessions)
+            if item.strip() and not item.strip().startswith("#")
+        ]
+        # Avoid starting the same exported session more than once.
+        session_strings = list(dict.fromkeys(session_strings))
         if not session_strings:
             logger.warning(
                 "No user sessions found! Using bot for streaming (slower). "
@@ -111,14 +121,21 @@ class SessionManager:
             logger.warning("Failed to register bot commands: %s", e)
 
     def get_client(self) -> Optional[Client]:
-        if not self.clients:
-            return self.bot_client
-        client = self.clients[self._index]
-        self._index = (self._index + 1) % len(self.clients)
+        clients = self.get_all_clients()
+        if not clients:
+            return None
+        client = clients[self._index % len(clients)]
+        self._index = (self._index + 1) % len(clients)
         return client
 
     def get_all_clients(self) -> List[Client]:
-        return self.clients if self.clients else ([self.bot_client] if self.bot_client else [])
+        # Keep the bot client available as a fallback: user sessions may not
+        # have joined the source/storage channel even when they are valid.
+        result: List[Client] = []
+        for client in [*self.clients, self.bot_client]:
+            if client is not None and client.is_connected and all(client is not x for x in result):
+                result.append(client)
+        return result
 
 
 session_manager = SessionManager()

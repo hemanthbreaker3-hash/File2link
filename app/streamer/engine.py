@@ -124,6 +124,33 @@ async def _resolve_message(client: Client, chat_id: int, message_id: int):
     return None
 
 
+async def _acquire_message_client(clients: list[Client], chat_id: int, message_id: int):
+    """Return a locked client that can actually read the requested Telegram media.
+
+    A valid user session is not necessarily a member of the source channel.
+    Resolve and stream with the SAME client; never resolve on one client and
+    accidentally call stream_media on another.
+    """
+    last_error = None
+    remaining = list(clients)
+    while remaining:
+        client = await _acquire_client(remaining)
+        remaining = [candidate for candidate in remaining if candidate is not client]
+        try:
+            message = await _resolve_message(client, chat_id, message_id)
+            if message is not None:
+                return client, message
+            last_error = "message unavailable to this session (check source-channel membership)"
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Session cannot access Telegram media: %s", exc)
+        await _release_client(client)
+    raise HTTPException(
+        status_code=404,
+        detail=f"No connected Telegram session can access this media. Add the bot and user sessions to the source channel. ({last_error})",
+    )
+
+
 async def _stream_file_chunks(
     client: Client,
     message,
@@ -215,11 +242,8 @@ async def media_streamer(
         n = min(n, max(1, total // MIN_PART_BYTES))
 
     if n <= 1:
-        client = await _acquire_client(live)
+        client, message = await _acquire_message_client(live, chat_id, message_id)
         try:
-            message = await _resolve_message(client, chat_id, message_id)
-            if message is None:
-                raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
             async for chunk in _download_byte_range(client, message, start, end):
                 yield chunk
         finally:
@@ -237,19 +261,8 @@ async def media_streamer(
             break
 
     async def fetch_part(p_start: int, p_end: int) -> bytes:
-        client = await _acquire_client(live)
+        client, msg = await _acquire_message_client(live, chat_id, message_id)
         try:
-            msg = await _resolve_message(client, chat_id, message_id)
-            if msg is None:
-                # try any other client
-                for alt in live:
-                    if alt is client:
-                        continue
-                    msg = await _resolve_message(alt, chat_id, message_id)
-                    if msg is not None:
-                        break
-            if msg is None:
-                raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
             buf = bytearray()
             async for chunk in _download_byte_range(client, msg, p_start, p_end):
                 buf.extend(chunk)
@@ -334,7 +347,7 @@ def _build_ffmpeg_cmd(audio_track: int, force_aac: bool = True) -> list[str]:
 
 
 async def remux_streamer(
-    client: Client,
+    clients: list[Client],
     chat_id: int,
     message_id: int,
     file_size: int,
@@ -344,9 +357,7 @@ async def remux_streamer(
     if audio_track < 0 or audio_track > 32:
         raise HTTPException(status_code=400, detail="Invalid audio track")
 
-    message = await _resolve_message(client, chat_id, message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
+    client, message = await _acquire_message_client(clients, chat_id, message_id)
 
     cmd = _build_ffmpeg_cmd(audio_track, force_aac=force_aac)
     logger.info("Starting remux ffmpeg: %s", " ".join(cmd))
@@ -406,10 +417,11 @@ async def remux_streamer(
             await process.wait()
         except Exception:
             pass
+        await _release_client(client)
 
 
 async def get_remux_response(
-    client: Client,
+    clients: list[Client],
     chat_id: int,
     message_id: int,
     file_size: int,
@@ -420,7 +432,7 @@ async def get_remux_response(
     base_name = (filename or "media").rsplit(".", 1)[0]
     safe_name = re.sub(r'[\r\n"\\]', "_", f"{base_name}.mp4")[:180]
     return StreamingResponse(
-        remux_streamer(client, chat_id, message_id, file_size, audio_track, force_aac=force_aac),
+        remux_streamer(clients, chat_id, message_id, file_size, audio_track, force_aac=force_aac),
         media_type="video/mp4",
         headers={
             "Content-Disposition": f'inline; filename="{safe_name}"',
