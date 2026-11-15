@@ -2,17 +2,20 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
-from app.database.connection import settings, files_col, create_indexes
+from app.database.connection import settings, files_col, client as mongo_client, create_indexes, load_custom_settings
 from app.streamer.manager import session_manager
 from app.streamer.engine import get_streaming_response, get_remux_response
 from app.streamer.probe import probe_tracks
 from app.bot.main import register_handlers
 from app.admin.routes import router as admin_router
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio
 import logging
 import sys
+import datetime
+from pathlib import Path
 
 # Configure Windows Event Loop Policy for subprocess support
 if sys.platform == 'win32':
@@ -27,92 +30,82 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    await create_indexes()
-    await session_manager.start()
-    register_handlers(session_manager.bot_client)
-    logger.info("Application started")
-    yield
-    # Shutdown logic
-    await session_manager.stop()
-    logger.info("Application stopped")
+    try:
+        await mongo_client.admin.command("ping")
+        await create_indexes()
+        await load_custom_settings()
+        await session_manager.start()
+        register_handlers(session_manager.bot_client)
+        logger.info("HITLER service started")
+        yield
+    finally:
+        await session_manager.stop()
+        mongo_client.close()
+        logger.info("HITLER service stopped")
 
-app = FastAPI(title="Telegram Direct Media Link Generator", lifespan=lifespan)
+app = FastAPI(title="HITLER Media Link Service", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Enable Compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Mount Static Files & Templates
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+APP_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
-# Fast health check – returns immediately so deploy scripts don't wait 180s
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "HITLER"}
 
 @app.get("/")
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
 
 @app.get("/watch/{short_code}")
 async def watch_page(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="Link not found or expired")
     
-    from urllib.parse import quote, urlsplit
+    return templates.TemplateResponse(
+        request=request,
+        name="watch.html",
+        context={
+            "request": request,
+            "file": file_data,
+            "base_url": settings.BASE_URL.rstrip("/"),
+        },
+    )
 
-    stream_url = f"{settings.BASE_URL.rstrip('/')}/stream/{short_code}"
-    parsed = urlsplit(stream_url)
-    host_path = parsed.netloc + parsed.path
-    fallback = quote(stream_url, safe="")
-    source_mime = (file_data.get("mime_type") or "video/*").lower()
-    intent_mime = "audio%2F*" if source_mime.startswith("audio/") else "video%2F*"
-    # Package IDs target Android app packages. HTTPS remains the fallback
-    # when the app is absent or the page is opened outside Android Chrome.
-    player_apps = [
-        ("VLC", "org.videolan.vlc", "fas fa-play-circle"),
-        ("MX Player", "com.mxtech.videoplayer.ad", "fas fa-play-circle"),
-        ("MX Player Pro", "com.mxtech.videoplayer.pro", "fas fa-play-circle"),
-        ("PLAYit", "com.playit.videoplayer", "fas fa-play-circle"),
-        ("nPlayer", "com.newin.nplayer.pro", "fas fa-film"),
-        ("KMPlayer", "com.kmplayer", "fas fa-film"),
-        ("XPlayer", "video.player.videoplayer", "fas fa-film"),
-        ("Just Player", "com.brouken.player", "fas fa-film"),
-        ("BSPlayer", "com.bsplayer.bspandroid.free", "fas fa-film"),
-        ("Nova Player", "org.courville.nova", "fas fa-film"),
-        ("mpv", "is.xyz.mpv", "fas fa-film"),
-        ("Vimu Player", "net.gtvbox.videoplayer", "fas fa-film"),
-    ]
-    player_links = [{
-        "name": name,
-        "icon": icon,
-        "intent_url": (
-            f"intent://{host_path}#Intent;scheme={parsed.scheme};"
-            f"package={package};type={intent_mime};"
-            f"S.browser_fallback_url={fallback};end"
-        ),
-    } for name, package, icon in player_apps]
-
-    return templates.TemplateResponse("watch.html", {
-        "request": request,
-        "file": file_data,
-        "base_url": settings.BASE_URL.rstrip("/"),
-        "stream_url": stream_url,
-        "player_links": player_links,
-    })
-
-async def _stream_file_response(request: Request, short_code: str, as_attachment: bool = False):
+@app.get("/dl/{short_code}")
+@app.get("/stream/{short_code}")
+async def stream_file(request: Request, short_code: str):
     file_data = await files_col.find_one({"short_code": short_code})
     if not file_data:
         raise HTTPException(status_code=404, detail="File not found")
+    if file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow():
+        await files_col.delete_one({"short_code": short_code})
+        raise HTTPException(status_code=404, detail="Link expired")
+
+    await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
 
     # Use all available clients for ultra-high-speed downloads
     clients = session_manager.get_all_clients()
-    client = clients[0]  # Use first client for initial message fetch
+    if not clients:
+        raise HTTPException(status_code=503, detail="Telegram sessions are unavailable")
+    client = session_manager.get_client()
     
     try:
         # Fetch the message that contains the media
@@ -127,29 +120,21 @@ async def _stream_file_response(request: Request, short_code: str, as_attachment
         elif hasattr(file, 'photo'):
             file = file.photo
             
-    except Exception as e:
-        logger.error(f"Error fetching file: {e}")
-        raise HTTPException(status_code=500, detail="Error retrieving file from Telegram")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Error fetching Telegram media")
+        raise HTTPException(status_code=502, detail="Unable to retrieve media from Telegram")
 
     return await get_streaming_response(
-        clients,  # Pass ALL clients for parallel downloading
+        [client],  # Keep the media reference bound to the session that fetched it.
         file=file,
         file_size=file_data['file_size'],
         filename=file_data['filename'],
         mime_type=file_data['mime_type'],
         request=request,
-        as_attachment=as_attachment,
+        chunk_size=settings.STREAM_CHUNK_SIZE,
     )
-
-
-@app.get("/stream/{short_code}")
-async def stream_file(request: Request, short_code: str):
-    return await _stream_file_response(request, short_code, as_attachment=False)
-
-
-@app.get("/dl/{short_code}")
-async def download_file(request: Request, short_code: str):
-    return await _stream_file_response(request, short_code, as_attachment=True)
 
 
 # ─── Audio Track Discovery API ────────────────────────────────────────────────
@@ -158,13 +143,12 @@ async def download_file(request: Request, short_code: str):
 async def get_tracks(short_code: str):
     """Return available audio/video/subtitle tracks for a media file."""
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
-        raise HTTPException(status_code=404, detail="File not found")
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
+        raise HTTPException(status_code=404, detail="File not found or expired")
     
-    # Track probing is expensive because MP4 metadata may be stored at EOF.
-    # Cache successful version-2 probes and reuse them on subsequent visits.
-    cached = file_data.get("tracks_info")
-    if cached and cached.get("probe_version") == 2 and not cached.get("error"):
+    # Check if tracks are already cached in the database (and not an error result)
+    cached = file_data.get('tracks_info')
+    if cached and not cached.get('error'):
         return JSONResponse(cached)
     
     # Need to probe the file
@@ -187,12 +171,10 @@ async def get_tracks(short_code: str):
             })
         
         # Pass the message for download_media fallback, and media for iter_download
-        tracks_info = await probe_tracks(
-            client, msg, file_data["file_size"], file_data.get("filename", "media")
-        )
+        tracks_info = await probe_tracks(client, msg, file_data['file_size'])
         
         # Only cache if no error
-        if not tracks_info.get("error"):
+        if not tracks_info.get('error'):
             await files_col.update_one(
                 {"short_code": short_code},
                 {"$set": {"tracks_info": tracks_info}}
@@ -219,40 +201,12 @@ async def remux_file(request: Request, short_code: str, audio: int = 0):
         audio: Audio track index (0-based, default 0)
     """
     file_data = await files_col.find_one({"short_code": short_code})
-    if not file_data:
-        raise HTTPException(status_code=404, detail="File not found")
+    if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
+        raise HTTPException(status_code=404, detail="File not found or expired")
+    if audio < 0 or audio > 32:
+        raise HTTPException(status_code=400, detail="Invalid audio track")
     
-    if audio < -1:
-        raise HTTPException(status_code=400, detail="Audio track index must be -1 or greater")
-
-    # Validate requested audio index against cached/probed tracks. -1 means
-    # video-only output and is used for media without an audio stream.
-    track_info = file_data.get("tracks_info")
-    if not track_info or track_info.get("probe_version") != 2:
-        client_for_probe = session_manager.get_client()
-        probe_msg = await client_for_probe.get_messages(
-            file_data["chat_id"], ids=file_data["message_id"]
-        )
-        if not probe_msg or not probe_msg.media:
-            raise HTTPException(status_code=404, detail="Media no longer available")
-        track_info = await probe_tracks(
-            client_for_probe, probe_msg, file_data["file_size"],
-            file_data.get("filename", "media")
-        )
-        if track_info.get("error"):
-            raise HTTPException(status_code=422, detail=f"Cannot inspect media tracks: {track_info['error']}")
-        await files_col.update_one(
-            {"short_code": short_code}, {"$set": {"tracks_info": track_info}}
-        )
-
-    audio_tracks = track_info.get("audio_tracks", [])
-    if audio == -1:
-        if not track_info.get("video_tracks"):
-            raise HTTPException(status_code=422, detail="This file has no video stream")
-    elif audio >= len(audio_tracks):
-        raise HTTPException(status_code=400, detail="Requested audio track does not exist")
-
-    # FFmpeg needs sequential input; use one Telegram session for this stream.
+    # Use a single client for sequential download (FFmpeg needs sequential input)
     client = session_manager.get_client()
     
     try:
@@ -286,4 +240,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     # use loop="asyncio" to prevent Uvicorn from forcing SelectorEventLoop on Windows,
     # which causes NotImplementedError with asyncio.create_subprocess_exec
-    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=True, loop="asyncio")
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False, loop="asyncio")

@@ -1,151 +1,165 @@
-# 🚀 CantarellaBots Media Streamer
+# HITLER — Telegram Media Link Service
 
-A high-performance Telegram media streaming and direct link generator bot built with FastAPI and Telethon. Designed for extreme speed.
+Telegram bot and FastAPI web application for creating direct download and browser-streaming links for media messages.
 
-![Video Background Preview](https://img.shields.io/badge/Aesthetic-Wuthering_Waves-blueviolet?style=for-the-badge)
-![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
-![Telethon](https://img.shields.io/badge/Telethon-26A5E4?style=for-the-badge&logo=telegram)
+**Telegram:** https://t.me/HiTLERYT  
+**Username:** @hitleryt
 
-## ✨ Features
+## Features
 
-- ⚡ **Ultra High-Speed Streaming**: Optimized multi-worker engine with adaptive chunking and sequential fallbacks for stability.
-- 🔄 **Multi-Session Load Balancing**: Distributes download tasks across multiple Telegram user sessions to bypass rate limits.
-- 🎨 **Premium UI**: Modern web interface featuring a cinematic **Wuthering Waves video background**, glassmorphism, and responsive design.
-- 🔒 **Force Subscribe (FSUB)**: Gated access ensuring users join your Telegram channels before using the bot.
-- 🛡️ **Rate Limiting**: Redis-powered (with memory fallback) rate limiting to prevent spam and abuse.
-- 📊 **Admin Dashboard**: Built-in logging for new users and file uploads.
-- 📁 **Adaptive Content-Type**: Supports streaming for video, audio, and high-quality photo previews.
-- 🔊 **Multi-Audio Support**: Switch between different audio tracks directly in the web player with on-the-fly remuxing.
+- Telegram bot file intake and generated download/watch links.
+- HTTP byte-range streaming for browser seeking and downloads.
+- Optional FFmpeg stream-copy remux for audio-track selection.
+- Android external-player intents for VLC, MX Player, Just Player, mpv and Kodi, plus a copyable stream URL.
+- Browser-only Web Audio volume amplification up to 300% and touch controls (right side: volume; left side: brightness).
+- Persistent `/baseurl` command for the bot owner and configured admins.
+- MongoDB-backed file metadata and settings.
+- Docker Compose VPS deployment with MongoDB, Redis, health checks and restart policies.
 
+> Volume amplification and brightness adjustments apply to the built-in browser player. External players use their own volume and display controls. Device-level brightness APIs are not consistently exposed to mobile browsers.
 
-## 🛠️ Tech Stack
+## Requirements
 
-- **Backend**: Python 3.10+, FastAPI, Uvicorn
-- **Telegram Logic**: Telethon (MTProto)
-- **Database**: MongoDB (Motor)
-- **Cache**: Redis (optional, falls back to memory)
-- **Processing**: FFmpeg (for audio track switching)
-- **Frontend**: HTML5, Vanilla CSS, TailwindCSS, Jinja2 Templates
+- Linux VPS with Docker Engine and Docker Compose plugin.
+- Public HTTPS domain pointing to the VPS (recommended for reliable Android intents and browser playback).
+- Telegram API ID/hash from `my.telegram.org`, bot token from BotFather, and the Telegram numeric owner ID.
 
-## 🚀 Quick Start
+## VPS deployment
 
-### 1. Clone the repository
+### One-command style (Git clone + exported credentials)
+
+Clone the repository, enter its directory, export your own File2link credentials, then run `deploy.vps`. The script automatically writes the exported values into a private `.env` file, validates them, builds the Docker image, starts the stack, and waits for the health endpoint.
+
 ```bash
-git clone https://github.com/abhinai2244/FileToLink.git
-cd FileToLink
+rm -rf file2link
+git clone YOUR_FILE2LINK_GITHUB_REPO file2link
+cd file2link
+
+export API_ID="YOUR_API_ID"
+export API_HASH="YOUR_API_HASH"
+export BOT_TOKEN="YOUR_BOT_TOKEN"
+export OWNER_ID="YOUR_TELEGRAM_USER_ID"
+export ADMINS=""
+export CHANNEL_ID=""
+export FORCE_SUB_CHANNELS=""
+export MONGODB_URI="YOUR_MONGODB_URI"
+export DATABASE_NAME="file2link"
+
+ls deploy.vps
+chmod +x deploy.vps
+./deploy.vps
 ```
 
-### 2. Install Dependencies
+Replace the placeholders with credentials for this bot and the actual GitHub URL. Do not reuse credentials from another bot. Never commit `.env` or publish live tokens/passwords. The deployment script supports exported variables, `config.env`, or `.env` (precedence: exported shell variables, then `config.env`, then existing `.env`). It also accepts `APP_ID` as an alias for `API_ID`, `DATABASE_URI`/`DATABASE_URL` for `MONGODB_URI`, and `LOG_CHANNEL` for `CHANNEL_ID`.
+
+Alternatively, after exporting the same variables in your current shell, use the included helper:
+
 ```bash
-pip install -r requirements.txt
+chmod +x deploy-from-git.sh
+./deploy-from-git.sh YOUR_FILE2LINK_GITHUB_REPO file2link
 ```
 
-### 3. Configure Environment Variables
-Create a `.env` file in the root directory:
-```env
-API_ID=your_api_id
-API_HASH=your_api_hash
-BOT_TOKEN=your_bot_token
-DATABASE_URL=mongodb+srv://...
-BASE_URL=http://localhost:8000
-FORCE_SUB_CHANNELS=-100...
-CHANNEL_ID=-100...
-USER_SESSIONS=string_session1,string_session2
-```
+The helper refuses to overwrite an existing directory. If you intentionally want a clean clone, remove that directory first.
 
-### 4. Run the Application
+The script requires Docker Engine and Docker Compose (it installs Docker on supported Linux VPS systems when missing). By default, Compose starts local MongoDB and Redis containers. If `MONGODB_URI` points to MongoDB Atlas, the app uses that external database URI; the bundled MongoDB service remains available but is not the configured application database. Verify the deployment with:
+
 ```bash
-py -m app.main
+docker compose ps
+docker compose logs --tail=100 web
+curl -fsS http://127.0.0.1:8000/health
 ```
 
-## 🤖 BotFather Commands
+The health check confirms the web process is responding; it does not prove Telegram authorization, Atlas network access, DNS, firewall, TLS, or end-to-end playback.
 
-Copy and paste these to [@BotFather](https://t.me/BotFather) to set up your bot's menu:
+## Configuration
 
-```text
-start - Start the bot
-stats - View bot statistics (Admin Only)
-broadcast - Broadcast message (Admin Only)
-ban - Ban a user (Admin Only)
-unban - Unban a user (Admin Only)
+| Variable | Required | Description |
+|---|---:|---|
+| `API_ID` | Yes | Telegram API ID |
+| `API_HASH` | Yes | Telegram API hash |
+| `BOT_TOKEN` | Yes | Telegram bot token |
+| `OWNER_ID` | Yes | Numeric Telegram owner ID |
+| `ADMINS` | No | Comma-separated admin Telegram IDs |
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `DATABASE_NAME` | No | MongoDB database name; defaults to `tg_media_bot` |
+| `REDIS_URL` | No | Redis URL; Compose default is `redis://redis:6379/0` |
+| `BASE_URL` | Yes in production | Public base URL, including `https://` |
+| `DEFAULT_EXPIRY` | No | Link lifetime in hours; `0` disables expiry |
+| `SESSIONS` | No | Comma-separated Telethon StringSession values |
+| `ADMIN_PANEL_TOKEN` | No | Enables `/admin` HTTP Basic auth; username is `admin` |
+| `STREAM_CHUNK_SIZE` | No | Stream read size from 64 KiB to 1 MiB |
+
+The admin panel is disabled unless `ADMIN_PANEL_TOKEN` is set. Do not expose an unprotected admin dashboard to the public internet.
+
+## Bot commands
+
+- `/start` — start the bot.
+- `/baseurl` — show the current public base URL.
+- `/baseurl https://your-domain.example` — validate, persist and activate a new base URL.
+- `/stats` — show basic bot statistics (owner/admin only).
+
+The base URL is stored in MongoDB and loaded at application startup. Newly generated links use the updated value without editing `.env` or restarting the service.
+
+## Streaming and player notes
+
+- Browser streaming supports standard single byte ranges and returns `206 Partial Content` for valid range requests; invalid ranges return `416`.
+- The streaming engine uses ordered, bounded-memory reads to avoid out-of-order/corrupted media. Multiple Telegram sessions are supported for session selection, but the media reference is downloaded through the same session that fetched it.
+- The `/remux/{short_code}?audio=N` endpoint requires FFmpeg and performs stream-copy remuxing; seeking is not available in remux mode.
+- Android external-player buttons use Android VIEW intents with the media MIME type. If a package is missing or an intent is blocked, copy the stream URL into the installed player's network-stream dialog.
+- Browser volume boost uses Web Audio and may be unavailable in browsers that block audio processing. High gain can cause distortion; keep the level at the lowest useful setting.
+
+## Reverse proxy
+
+Put the app behind Nginx, Caddy or another TLS reverse proxy. Forward requests to `127.0.0.1:8000`, preserve the `Range` and `Host` headers, and allow long-lived streaming responses. Do not buffer large streaming responses at the proxy.
+
+## Automatic public HTTPS URL with Cloudflare Quick Tunnel
+
+`./deploy.vps` now installs `cloudflared` automatically after the web health check and creates a systemd service named `file2link-cloudflared`. The deployment waits for Cloudflare to issue a `https://*.trycloudflare.com` URL, writes it to `.env`, stores it in MongoDB (`settings` collection, key `base_url`), and recreates the web container so the bot immediately uses it for newly generated download and watch buttons.
+
+The service starts again after VPS reboot. If Cloudflare issues a different Quick Tunnel URL after a reboot or service restart, the helper automatically updates `.env` and MongoDB and restarts the web container to apply the new URL.
+
+Useful commands:
+
+```bash
+# Show the current generated URL
+sudo grep '^BASE_URL=' .env
+
+# Follow tunnel logs / troubleshoot URL generation
+sudo journalctl -u file2link-cloudflared -f
+
+# Restart the tunnel (a new temporary URL may be generated)
+sudo systemctl restart file2link-cloudflared
+
+# Check service status
+sudo systemctl status file2link-cloudflared --no-pager
 ```
 
-## 📂 Project Structure
+Quick Tunnels are temporary and intended for testing: their URL can change after a restart, and Cloudflare does not provide an uptime guarantee for them. The File2link service automatically synchronizes the new URL, but links already shared with users using an old URL will not be rewritten. For production, use a named Cloudflare Tunnel with a hostname on your own domain.
 
-```text
-├── app/
-│   ├── bot/            # Telegram bot handlers
-│   ├── cache/          # Redis and rate limit logic
-│   ├── database/       # MongoDB connections and models
-│   ├── streamer/       # Core streaming & multi-session engine
-│   ├── static/         # CSS, JS, and Background Video
-│   ├── templates/      # Jinja2 HTML templates
-│   └── main.py         # FastAPI entry point
-├── requirements.txt
-└── .env
+## Maintenance
+
+```bash
+docker compose logs -f web
+docker compose restart web
+docker compose pull mongodb redis
+docker compose up -d --build
 ```
 
-## 🚀 Deployment
+MongoDB data is stored in the `mongodb_data` Docker volume. Back it up before upgrades or migrations.
 
-This bot is designed to be easily deployable on modern cloud platforms.
+## Testing and verification
 
-### 🌐 Deploy on Render
-1. Create a new **Web Service**.
-2. Connect your GitHub repository.
-3. Select **Python** as the environment.
-4. **Build Command**: `pip install -r requirements.txt`
-5. **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-6. Add all environment variables from `.env` in the **Environment** tab.
+Run locally in an environment with dependencies installed:
 
-### ☁️ Deploy on Koyeb
-1. Create a new **Service**.
-2. Choose **GitHub** and select your repository.
-3. In the **Build and Run** settings:
-   - Choose **Buildpack**.
-   - Set the **Run command** to: `uvicorn app.main:app --host 0.0.0.0 --port 8000` (Koyeb handles port mapping).
-4. Add your environment variables.
+```bash
+python -m compileall -q app workers gen_session.py
+pytest -q
+```
 
-### 🟣 Deploy on Heroku
-1. Create a new App.
-2. Add a `Procfile` (already included): `web: uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-3. Add the **Python Buildpack**.
-4. Configure your **Config Vars** in the Settings tab.
+For a production acceptance test, additionally verify bot authentication, uploading a test file, generated link opening, HTTP range seeking, full download, Android player launches, audio-track remuxing, `/baseurl` persistence after restart, and concurrent playback from separate devices. A successful image build or `/health` response alone does not prove every Telegram or client-device feature works.
 
-> [!TIP]
-> **Performance & Keep-Alive**: Most free platforms (like Render or Koyeb) will put your bot to "sleep" after 15-30 minutes of inactivity. To prevent this:
-> 1. Go to [UptimeRobot](https://uptimerobot.com/).
-> 2. Create a new **HTTP(s) Monitor**.
-> 3. Point it to your `BASE_URL` (e.g., `https://your-app.render.com/`).
-> 4. Set the interval to **5 minutes**. 
-> This will ping your site regularly and keep the bot awake 24/7!
+## Public Base URL and Telegram file buttons
 
-## 🤝 Support & Credits
+Set `BASE_URL` to a publicly reachable URL before users upload files. For Cloudflare Quick Tunnel, run `cloudflared tunnel --url http://127.0.0.1:8000`, then send the generated URL to the bot with `/baseurl https://YOUR-NAME.trycloudflare.com`. The bot validates the URL and uses it for the Direct Download (`/dl/`) and Watch Online (`/watch/`) buttons attached to the uploaded file message. `localhost` and private IP addresses are intentionally rejected because Telegram users cannot reach them.
 
-- **Developer**: [@cantarella_wuwa](https://t.me/cantarella_wuwa)
-- **Channel**: [@cantarellabots](https://t.me/cantarellabots)
-
----
-*Built with ❤️ for the community.*
-
-
-## Watch page: external players and multi-audio
-
-- The watch page provides Android app-intent buttons for VLC, MX Player, MX Player Pro,
-  PLAYit, nPlayer, KMPlayer and XPlayer. If Android does not launch the requested app,
-  the intent falls back to the HTTPS stream URL. A plain browser/other-app link is also shown.
-- External players receive the original `/stream/<code>` URL, with HTTP byte-range support,
-  so the player can select audio/subtitle tracks supported by the source container.
-- Browser playback uses `/remux/<code>?audio=<index>`. FFmpeg copies the video stream and
-  converts the selected audio stream to AAC stereo for much broader browser compatibility.
-  Switching audio tracks restarts playback from the beginning; seeking is not supported on
-  the remux endpoint.
-- Audio-track discovery uses `ffprobe` against a temporary complete copy of the Telegram
-  media. This is deliberate: MP4/MOV metadata can be at the end of a file, so probing only
-  the first few megabytes can miss audio tracks. Successful probe results are cached in MongoDB.
-  Ensure the container has enough temporary disk space for the largest file being inspected.
-- FFmpeg and ffprobe are installed by `docker/Dockerfile` and the `Aptfile`.
-
-For browser playback, H.264 video with AAC audio has the widest support. Other video codecs
-(such as HEVC/H.265, AV1 or some VP9 profiles) may still require an external player depending
-on the browser/device. External player support also depends on the app being installed and
-the Android package ID registered by that app.
+The update-channel buttons point to `https://t.me/HiTLERYT`. `CHANNEL_ID` remains a numeric Telegram chat ID for private logging/file mirroring; it must not be replaced with a public URL.

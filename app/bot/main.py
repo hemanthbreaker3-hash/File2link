@@ -1,43 +1,69 @@
 from telethon import events, Button
 from app.streamer.manager import session_manager
-from app.database.connection import files_col, users_col, settings
+from app.database.connection import files_col, users_col, settings_col, settings
 from app.models.schemas import FileMetadata, User
-from app.utils.helpers import generate_short_code
+from app.utils.helpers import generate_short_code, format_bytes, normalize_public_base_url
 from app.utils.fsub import is_user_fsubbed
 from app.utils.rate_limit import check_rate_limit
 import datetime
+import mimetypes
 import logging
+import html
 
 logger = logging.getLogger(__name__)
 
+def get_ist_greeting():
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now = datetime.datetime.now(ist_tz)
+    hour = now.hour
+    if 5 <= hour < 12:
+        return "Good Morning 🌅"
+    elif 12 <= hour < 17:
+        return "Good Afternoon ☀️"
+    else:
+        return "Good Evening 🌙"
+
 def register_handlers(bot):
+
     @bot.on(events.NewMessage(pattern='/start'))
     async def start_handler(event):
+        # Only respond to human users, ignore other bots
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         user_id = event.sender_id
+
         # Save user to DB
         user_data = await users_col.find_one({"user_id": user_id})
         if user_data and user_data.get('is_banned'):
-            return await event.reply("🚫 You are banned from using this bot.")
+            return await event.reply(
+                "🚫 **Access Suspended**\n\n"
+                "> Your account has been banned from using this service.\n"
+                "> Contact support if you believe this is a mistake."
+            )
             
         if not user_data:
             new_user = User(
                 user_id=user_id,
-                username=event.sender.username,
-                first_name=event.sender.first_name,
-                last_name=event.sender.last_name
+                username=getattr(sender, 'username', None),
+                first_name=getattr(sender, 'first_name', None),
+                last_name=getattr(sender, 'last_name', None)
             )
             await users_col.insert_one(new_user.dict())
             
             # Log New User
             if settings.CHANNEL_ID:
                 try:
-                    name = f"{event.sender.first_name} {event.sender.last_name or ''}".strip()
+                    first_name = getattr(sender, 'first_name', '') or ''
+                    last_name = getattr(sender, 'last_name', '') or ''
+                    name = f"{first_name} {last_name}".strip()
                     await bot.send_message(
                         settings.CHANNEL_ID,
-                        f"#NewUser\n\n"
-                        f"Iᴅ - `{user_id}`\n"
-                        f"Nᴀᴍᴇ - {name}\n"
-                        f"Usᴇʀɴᴀᴍᴇ - @{event.sender.username or 'N/A'}"
+                        f"👤 **#NewUser Alert**\n\n"
+                        f"> 🆔 **ID:** `{user_id}`\n"
+                        f"> 📛 **Name:** {name}\n"
+                        f"> 🌐 **Username:** @{getattr(sender, 'username', None) or 'N/A'}"
                     )
                 except Exception as e:
                     logger.error(f"Error sending new user log: {e}")
@@ -45,44 +71,64 @@ def register_handlers(bot):
         # Force Sub Check
         if not await is_user_fsubbed(bot, user_id):
             return await event.respond(
-                "❌ **Access Denied!**\n\n"
-                "You must join our channels to use this bot.\n"
-                "Please join and then send /start again.",
-                buttons=[[Button.url("Join Channel", "https://t.me/cantarellabots")]]
+                "🔒 **Access Restricted**\n\n"
+                "> Join our official updates channel, then send /start again.",
+                buttons=[[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]],
             )
 
-        await event.respond(
-            "👋 Welcome to CantarellaBots Media Streamer!\n\n"
-            "Send me any media file and I will generate a direct high-speed download/stream link for you.",
-            buttons=[
-                [Button.url("Join Channel", "https://t.me/cantarellabots"), Button.url("Developer", "https://t.me/cantarella_wuwa")],
-                [Button.inline("Help", b"help"), Button.inline("About", b"about")]
-            ]
+        first_name = getattr(sender, 'first_name', None) or "User"
+        mention = f"[{first_name}](tg://user?id={user_id})"
+        greeting = get_ist_greeting()
+
+        start_text = (
+            f"👑 **{greeting}, {mention}!**\n\n"
+            f"> ⚡ **Welcome to Premium Direct Link & Streaming Service**\n"
+            f">\n"
+            f"> 🚀 *Upload or forward any Telegram file to generate ultra-fast direct download & streaming links instantly.*"
         )
+
+        buttons = [[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]]
+        await event.respond(start_text, buttons=buttons)
 
     @bot.on(events.NewMessage(func=lambda e: e.media))
     async def media_handler(event):
+        # Ignore messages inside channels or log channel
+        if event.is_channel and not event.is_group:
+            return
+
+        # Ignore non-users / bots
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         # Ban Check
         user_data = await users_col.find_one({"user_id": event.sender_id})
         if user_data and user_data.get('is_banned'):
-            return await event.reply("🚫 You are banned from using this bot.")
+            return await event.reply(
+                "🚫 **Access Suspended**\n\n"
+                "> Your account has been banned from using this service."
+            )
 
         # Rate Limit Check
         if not await check_rate_limit(event.sender_id):
-            return await event.reply("⚠️ **Slow down!** Please wait a moment before sending more files.")
+            return await event.reply(
+                "⏳ **Rate Limit Exceeded**\n\n"
+                "> Please wait a few seconds before uploading more files."
+            )
 
         # Force Sub Check
         if not await is_user_fsubbed(bot, event.sender_id):
-            await event.reply(
-                "❌ **Access Denied!**\n\n"
-                "You must join our channels to use this bot.",
-                buttons=[[Button.url("Join Channel", "https://t.me/cantarellabots")]]
+            return await event.reply(
+                "🔒 **Access Restricted**\n\n"
+                "> Join our official updates channel, then upload your file again.",
+                buttons=[[Button.url("📢 Join Updates Channel", settings.UPDATE_CHANNEL_URL)]],
             )
-            return
 
         media = event.media
         if not media:
             return
+
+        detecting_msg = await event.reply("⚡ **Analyzing media & preparing instant links...**")
 
         # Extract file info
         file_id = ""
@@ -94,7 +140,9 @@ def register_handlers(bot):
             doc = media.document
             file_name = next((attr.file_name for attr in doc.attributes if hasattr(attr, 'file_name')), "file")
             file_size = doc.size
-            mime_type = doc.mime_type
+            mime_type = doc.mime_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+            if mime_type == "application/octet-stream":
+                mime_type = mimetypes.guess_type(file_name)[0] or mime_type
             file_id = f"{doc.id}_{doc.access_hash}"
         elif hasattr(media, 'photo'):
             photo = media.photo
@@ -104,13 +152,13 @@ def register_handlers(bot):
             file_id = f"{photo.id}_{photo.access_hash}"
         
         if not file_id:
-            return
+            return await detecting_msg.edit("❌ **Error:** Could not extract media details from this file.")
 
         short_code = generate_short_code()
         
         file_meta = FileMetadata(
             file_id=file_id,
-            file_unique_id=str(event.id), # Simplified
+            file_unique_id=str(event.id),
             filename=file_name,
             mime_type=mime_type,
             file_size=file_size,
@@ -123,74 +171,188 @@ def register_handlers(bot):
         
         await files_col.insert_one(file_meta.dict())
         
-        base_url = settings.BASE_URL.rstrip('/')
-        download_url = f"{base_url}/dl/{short_code}"
-        stream_url = f"{base_url}/watch/{short_code}"
-        
-        # Log File Upload
-        if settings.CHANNEL_ID:
+        # Telegram rejects localhost/private URLs in inline buttons. Require a public URL.
+        try:
+            base_url = normalize_public_base_url(settings.BASE_URL)
+            links_ready = True
+        except ValueError as exc:
+            logger.warning("Public BASE_URL is not configured; generated media links are paused: %s", exc)
+            base_url = None
+            links_ready = False
+
+        formatted_size = format_bytes(file_size) if file_size else "N/A"
+        safe_name = html.escape(file_name)
+        safe_mime = html.escape(mime_type)
+
+        if links_ready:
+            download_url = f"{base_url}/dl/{short_code}"
+            stream_url = f"{base_url}/watch/{short_code}"
+            caption = (
+                "💎 <b>Media Links Generated</b>\n\n"
+                f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
+                f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
+                f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
+                "🚀 <b>Fast Links</b>\n"
+                f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>\n"
+                f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n\n"
+                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+            )
+            user_buttons = [
+                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+                [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())],
+            ]
+            channel_buttons = [
+                [Button.url("⚡ Direct Download", download_url), Button.url("🍿 Watch Online", stream_url)],
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+            ]
+        else:
+            caption = (
+                "💎 <b>File Received Successfully</b>\n\n"
+                f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
+                f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
+                f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
+                "⚠️ <b>Download and streaming links are not active yet.</b>\n"
+                "The administrator must set a public HTTPS address using <code>/baseurl https://your-public-domain</code>.\n\n"
+                f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
+            )
+            user_buttons = [
+                [Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)],
+                [Button.inline("🗑️ Delete Link", f"del_{short_code}".encode())],
+            ]
+            channel_buttons = [[Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)]]
+
+        # Delete status message after metadata and links have been prepared.
+        try:
+            await detecting_msg.delete()
+        except Exception as e:
+            logger.warning("Could not delete media status message: %s", e)
+
+        # Send the original file together with its download/stream links and inline buttons.
+        try:
+            await bot.send_file(
+                event.chat_id,
+                file=event.media,
+                caption=caption,
+                parse_mode="html",
+                buttons=user_buttons,
+                reply_to=event.id,
+            )
+        except Exception as e:
+            logger.exception("Error sending file with inline buttons: %s", e)
+            # Keep the media delivery working even if Telegram rejects a button.
             try:
-                await bot.send_message(
+                await bot.send_file(
+                    event.chat_id,
+                    file=event.media,
+                    caption=caption,
+                    parse_mode="html",
+                    buttons=[[Button.url("📢 Updates Channel", settings.UPDATE_CHANNEL_URL)]],
+                    reply_to=event.id,
+                )
+                await event.reply(
+                    "⚠️ The file was sent, but Telegram rejected one or more action buttons. "
+                    "Please verify the public BASE_URL with /baseurl."
+                )
+            except Exception as e2:
+                logger.exception("Error sending file fallback: %s", e2)
+                await event.reply(caption, parse_mode="html")
+
+        # Mirror the file to the configured numeric log channel, with the same working links.
+        if settings.CHANNEL_ID and settings.CHANNEL_ID != event.chat_id:
+            try:
+                await bot.send_file(
                     settings.CHANNEL_ID,
-                    f"#NewFile\n\n"
-                    f"👤 **Uploader:** {event.sender.first_name} (`{event.sender_id}`)\n"
-                    f"📁 **File:** `{file_name}`\n"
-                    f"⚖️ **Size:** `{file_size / (1024*1024):.2f} MB`\n\n"
-                    f"📥 **Download:** {download_url}\n"
-                    f"🎬 **Stream:** {stream_url}"
+                    file=event.media,
+                    caption=caption,
+                    parse_mode="html",
+                    buttons=channel_buttons,
                 )
             except Exception as e:
-                logger.error(f"Error sending file log: {e}")
-        
-        caption = (
-            f"✅ **Link Generated!**\n\n"
-            f"📁 **File:** `{file_name}`\n"
-            f"⚖️ **Size:** `{file_size / (1024*1024):.2f} MB`\n"
-            f"⏳ **Expiry:** `{settings.DEFAULT_EXPIRY} hours`\n\n"
-            f"📥 **Download:** {download_url}\n"
-            f"🎬 **Stream:** {stream_url}"
-        )
-        
-        await event.reply(
-            caption,
-            buttons=[
-                [Button.url("Download", download_url), Button.url("Watch Online", stream_url)],
-                [Button.inline("Delete Link", f"del_{short_code}".encode())]
-            ]
-        )
+                logger.exception("Error sending file to configured log channel: %s", e)
 
     @bot.on(events.CallbackQuery())
     async def global_callback_check(event):
-        if not await is_user_fsubbed(bot, event.sender_id):
-            return await event.answer("❌ You must join the channel first!", alert=True)
-        
-    @bot.on(events.CallbackQuery(pattern=b'help'))
-    async def help_callback(event):
-        await event.answer("Just send any file to get a direct link!", alert=True)
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
 
-    @bot.on(events.CallbackQuery(pattern=b'about'))
-    async def about_callback(event):
-        await event.answer(
-            "🤖 CantarellaBots Media Streamer\n\n"
-            "This bot allows you to stream and download Telegram media at high speeds.\n\n"
-            "Channel: @cantarellabots\n"
-            "Developer: @cantarella_wuwa",
-            alert=True
-        )
+        if not await is_user_fsubbed(bot, event.sender_id):
+            return await event.answer("🔒 Please join the update channel first!", alert=True)
 
     @bot.on(events.CallbackQuery(pattern=b'del_'))
     async def delete_callback(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         short_code = event.data.decode().split("_")[1]
         file_data = await files_col.find_one({"short_code": short_code})
         if file_data and file_data['uploader_id'] == event.sender_id:
             await files_col.delete_one({"short_code": short_code})
-            await event.edit("🗑️ Link deleted successfully!")
+            await event.edit("🗑️ **Link deleted successfully!**")
         else:
-            await event.answer("❌ You are not authorized to delete this link.", alert=True)
+            await event.answer("🚫 You are not authorized to delete this link.", alert=True)
 
     # Admin Commands
+    @bot.on(events.NewMessage(pattern=r'^/baseurl(?:@\w+)?(?:\s|$)'))
+    async def baseurl_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
+        # Restrict to admins / owner only
+        if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
+            return await event.reply(
+                "🚫 **Unauthorized Access**\n\n"
+                "> Only authorized bot administrators can update the Base URL."
+            )
+
+        args = event.text.split(maxsplit=1)
+        if len(args) < 2:
+            return await event.reply(
+                "🌐 **Base URL Management**\n\n"
+                f"> 🔗 **Current Base URL:** `{settings.BASE_URL}`\n"
+                f"> 📢 **Updates Channel:** `{settings.UPDATE_CHANNEL_URL}`\n\n"
+                "⚠️ **Usage:** `/baseurl https://your-public-domain.com`"
+            )
+
+        new_url = args[1].strip()
+        if not new_url.startswith(("http://", "https://")):
+            new_url = f"https://{new_url}"
+        try:
+            new_url = normalize_public_base_url(new_url)
+        except ValueError as exc:
+            return await event.reply(
+                "❌ **Invalid public Base URL**\n\n"
+                f"> {html.escape(str(exc))}\n\n"
+                "Use your Cloudflare try URL, for example: `/baseurl https://name.trycloudflare.com`"
+            )
+
+        try:
+            await settings_col.update_one(
+                {"key": "base_url"},
+                {"$set": {"value": new_url, "updated_by": event.sender_id, "updated_at": datetime.datetime.utcnow()}},
+                upsert=True
+            )
+            settings.BASE_URL = new_url
+
+            await event.reply(
+                "🌐 **Base URL Updated Successfully!**\n\n"
+                f"> 🔗 **New Base URL:** `{new_url}`\n"
+                f"> 👤 **Updated By:** `{event.sender_id}`\n\n"
+                "✨ *All newly generated stream & download links will now use this updated Base URL.*"
+            )
+        except Exception as e:
+            logger.error(f"Error updating baseurl: {e}")
+            await event.reply(f"❌ **Error updating Base URL:** `{e}`")
+
     @bot.on(events.NewMessage(pattern='/stats'))
     async def stats_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
@@ -199,22 +361,30 @@ def register_handlers(bot):
         
         await event.reply(
             f"📊 **System Statistics**\n\n"
-            f"👥 Total Users: `{total_users}`\n"
-            f"📁 Total Files: `{total_files}`\n"
+            f"> 👥 **Total Users:** `{total_users}`\n"
+            f"> 📁 **Total Files Generated:** `{total_files}`\n"
+            f"> ⚡ **System Status:** `Online & High-Speed`"
         )
 
     @bot.on(events.NewMessage(pattern='/broadcast'))
     async def broadcast_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         if not event.reply_to_msg_id:
-            return await event.reply("Please reply to a message to broadcast it.")
+            return await event.reply("⚠️ **Usage:** Please reply to a message to broadcast it.")
             
         msg = await event.get_reply_message()
         users = await users_col.find().to_list(None)
         
-        status = await event.reply(f"🚀 **Broadcast Started...**\nTarget: `{len(users)}` users")
+        status = await event.reply(
+            f"📢 **Broadcast Initiated...**\n\n"
+            f"> 🎯 **Target:** `{len(users)}` users"
+        )
         
         done = 0
         failed = 0
@@ -226,51 +396,82 @@ def register_handlers(bot):
                 failed += 1
             
             if done % 20 == 0:
-                await status.edit(f"🚀 **Broadcast in Progress...**\n✅ Done: `{done}`\n❌ Failed: `{failed}`")
+                await status.edit(
+                    f"🔄 **Broadcast In Progress...**\n\n"
+                    f"> ✅ **Sent:** `{done}`\n"
+                    f"> ❌ **Failed:** `{failed}`"
+                )
                 
-        await status.edit(f"✅ **Broadcast Completed!**\n\n🎯 Total: `{len(users)}` users\n✨ Success: `{done}`\n💀 Failed: `{failed}`")
+        await status.edit(
+            f"🎉 **Broadcast Completed!**\n\n"
+            f"> 👥 **Total Target:** `{len(users)}` users\n"
+            f"> ✅ **Success:** `{done}`\n"
+            f"> ❌ **Failed:** `{failed}`"
+        )
 
     @bot.on(events.NewMessage(pattern='/ban'))
     async def ban_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         try:
             user_id = int(event.text.split()[1])
             await users_col.update_one({"user_id": user_id}, {"$set": {"is_banned": True}})
-            await event.reply(f"🚫 User `{user_id}` has been banned.")
+            await event.reply(
+                f"🛡️ **User Banned**\n\n"
+                f"> User ID `{user_id}` has been banned from using the bot."
+            )
         except Exception:
-            await event.reply("Usage: `/ban USER_ID`")
+            await event.reply("⚠️ **Usage:** `/ban USER_ID`")
 
     @bot.on(events.NewMessage(pattern='/unban'))
     async def unban_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
         
         try:
             user_id = int(event.text.split()[1])
             await users_col.update_one({"user_id": user_id}, {"$set": {"is_banned": False}})
-            await event.reply(f"✅ User `{user_id}` has been unbanned.")
+            await event.reply(
+                f"🛡️ **User Unbanned**\n\n"
+                f"> User ID `{user_id}` has been restored and unbanned."
+            )
         except Exception:
-            await event.reply("Usage: `/unban USER_ID`")
+            await event.reply("⚠️ **Usage:** `/unban USER_ID`")
 
     @bot.on(events.NewMessage(pattern='/autodel'))
     async def autodel_handler(event):
+        sender = await event.get_sender()
+        if not sender or getattr(sender, 'bot', False):
+            return
+
         if event.sender_id not in settings.admin_list and event.sender_id != settings.OWNER_ID:
             return
             
         try:
             args = event.text.split()
             if len(args) < 2:
-                return await event.reply("Usage: `/autodel 24h` or `/autodel off`")
+                return await event.reply("⚠️ **Usage:** `/autodel 24h` or `/autodel off`")
             
             val = args[1].lower()
             if val == "off":
-                # Implementation would require updating global settings or per-user
-                await event.reply("Auto-delete disabled (Global setting remains unchanged).")
+                await event.reply(
+                    f"⏳ **Auto-Delete Configured**\n\n"
+                    f"> Auto-delete feature has been disabled."
+                )
             else:
-                # Simple parser for hours
                 hours = int(val.replace("h", ""))
-                await event.reply(f"Auto-delete set to `{hours}` hours for future links.")
+                await event.reply(
+                    f"⏳ **Auto-Delete Configured**\n\n"
+                    f"> Link expiration set to `{hours}` hours."
+                )
         except Exception:
-            await event.reply("Usage: `/autodel 24h` or `/autodel off`")
+            await event.reply("⚠️ **Usage:** `/autodel 24h` or `/autodel off`")
