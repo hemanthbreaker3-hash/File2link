@@ -570,14 +570,14 @@ def register_handlers(bot):
             # Stream URL — ffmpeg seeks via Range, no full download
             source = local_tg_stream_url(chat_id, msg_id)
             work = make_work_dir("ss_")
-            await status.edit_text(f"🖼️ Extracting {count} frame(s) via stream…")
-            shots = await generate_screenshots(source, count, os.path.join(work, "out"))
+            await status.edit_text(f"🖼️ Random frames from stream (anywhere)…")
+            shots = await generate_screenshots(source, count, os.path.join(work, "out"), region="anywhere")
             if not shots:
                 # fallback: full download once
                 await status.edit_text("⬇️ Stream seek failed — downloading once…")
                 media_path = os.path.join(work, "input.bin")
                 await download_message_media(client, src_msg, media_path)
-                shots = await generate_screenshots(media_path, count, os.path.join(work, "out2"))
+                shots = await generate_screenshots(media_path, count, os.path.join(work, "out2"), region="anywhere")
             if not shots:
                 return await status.edit_text("❌ Could not extract screenshots from this file.")
 
@@ -624,14 +624,14 @@ def register_handlers(bot):
             source = local_tg_stream_url(chat_id, msg_id)
             work = make_work_dir("sv_")
             out_path = os.path.join(work, "sample.mp4")
-            await status.edit_text(f"✂️ Cutting {seconds}s sample via stream…")
+            await status.edit_text(f"✂️ Random mid→end {seconds}s sample via stream…")
             try:
-                await generate_sample_video(source, seconds, out_path)
+                await generate_sample_video(source, seconds, out_path, region="middle_last")
             except Exception:
                 await status.edit_text("⬇️ Stream cut failed — downloading once…")
                 media_path = os.path.join(work, "input.bin")
                 await download_message_media(client, src_msg, media_path)
-                await generate_sample_video(media_path, seconds, out_path)
+                await generate_sample_video(media_path, seconds, out_path, region="middle_last")
 
             await status.edit_text("📤 Uploading sample…")
             await client.send_video(

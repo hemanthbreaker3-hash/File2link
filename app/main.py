@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio
 import logging
+import os
 import sys
 import datetime
 from pathlib import Path
@@ -37,6 +38,8 @@ async def lifespan(app: FastAPI):
         session_manager.prepare_bot()
         register_handlers(session_manager.bot_client)
         await session_manager.start()
+        if getattr(settings, "BASE_URL", None):
+            os.environ["BASE_URL"] = str(settings.BASE_URL).rstrip("/")
         logger.info("HITLER service started (wzgram)")
         yield
     finally:

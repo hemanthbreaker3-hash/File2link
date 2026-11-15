@@ -1,3 +1,7 @@
+"""
+High-speed Telegram media streaming (FileToLink-style ByteStreamer + multi-client).
+Keeps browser remux (AAC multi-audio) separate from raw /stream and /dl.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -12,28 +16,64 @@ from wzgram import Client
 
 logger = logging.getLogger(__name__)
 
-STREAM_SEMAPHORE = asyncio.Semaphore(128)
-# wzgram/Pyrogram stream_media uses fixed ~1 MiB chunks; offset/limit are in CHUNKS not bytes
+# FileToLink CHUNK_SIZE
 TG_CHUNK = 1024 * 1024
 DEFAULT_CHUNK = TG_CHUNK
 MAX_PARALLEL_PARTS = 8
 MIN_PART_BYTES = 2 * 1024 * 1024
+MAX_CONCURRENT_PER_CLIENT = 8
+
+# Per-client in-flight counters (workload balancing like FileToLink work_loads)
+_work_loads: dict[int, int] = {}
+_work_lock = asyncio.Lock()
+
+
+def _cid(client: Client) -> int:
+    return id(client)
+
+
+async def _acquire_client(clients: list[Client]) -> Client:
+    async with _work_lock:
+        for c in clients:
+            _work_loads.setdefault(_cid(c), 0)
+        # Prefer clients under concurrency cap, else least loaded
+        under = [(c, _work_loads[_cid(c)]) for c in clients if _work_loads[_cid(c)] < MAX_CONCURRENT_PER_CLIENT]
+        if under:
+            client = min(under, key=lambda x: x[1])[0]
+        else:
+            client = min(clients, key=lambda c: _work_loads.get(_cid(c), 0))
+        _work_loads[_cid(client)] = _work_loads.get(_cid(client), 0) + 1
+        return client
+
+
+async def _release_client(client: Client) -> None:
+    async with _work_lock:
+        k = _cid(client)
+        _work_loads[k] = max(0, _work_loads.get(k, 0) - 1)
 
 
 def parse_range_header(request: Request, file_size: int) -> tuple[int, int, bool]:
-    header = request.headers.get("range")
+    """FileToLink-compatible Range parser."""
+    header = request.headers.get("range") or request.headers.get("Range") or ""
     if not header:
         return 0, max(file_size - 1, 0), False
-    match = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip(), flags=re.IGNORECASE)
-    if not match or "," in header or file_size <= 0:
+    match = re.search(r"bytes=(?P<start>\d*)-(?P<end>\d*)", header.strip(), flags=re.I)
+    if not match or file_size <= 0:
         raise HTTPException(
             status_code=416,
             detail="Requested range is not satisfiable",
             headers={"Content-Range": f"bytes */{file_size}"},
         )
-    first, last = match.groups()
-    if not first:
-        suffix = int(last or 0)
+    start_s, end_s = match.group("start"), match.group("end")
+    if start_s == "" and end_s == "":
+        raise HTTPException(
+            status_code=416,
+            detail="Requested range is not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+    if start_s == "":
+        # suffix: bytes=-N
+        suffix = int(end_s or 0)
         if suffix <= 0:
             raise HTTPException(
                 status_code=416,
@@ -42,8 +82,8 @@ def parse_range_header(request: Request, file_size: int) -> tuple[int, int, bool
             )
         start, end = max(file_size - suffix, 0), file_size - 1
     else:
-        start = int(first)
-        end = int(last) if last else file_size - 1
+        start = int(start_s)
+        end = int(end_s) if end_s else file_size - 1
         if start >= file_size or end < start:
             raise HTTPException(
                 status_code=416,
@@ -55,57 +95,96 @@ def parse_range_header(request: Request, file_size: int) -> tuple[int, int, bool
 
 
 async def _resolve_message(client: Client, chat_id: int, message_id: int):
-    msg = await client.get_messages(chat_id, message_id)
-    if not msg or (isinstance(msg, list) and not msg):
-        return None
-    if isinstance(msg, list):
-        msg = msg[0]
-    if not msg or not (
-        msg.media or msg.document or msg.video or msg.audio
-        or msg.animation or msg.voice or msg.video_note or msg.photo
-    ):
-        return None
-    return msg
+    last_err = None
+    for attempt in range(4):
+        try:
+            msg = await client.get_messages(chat_id, message_id)
+            if isinstance(msg, list):
+                msg = msg[0] if msg else None
+            if not msg:
+                return None
+            if not (
+                msg.media or msg.document or msg.video or msg.audio
+                or msg.animation or msg.voice or msg.video_note or msg.photo
+            ):
+                return None
+            return msg
+        except Exception as e:
+            last_err = e
+            # FloodWait-style backoff
+            wait = getattr(e, "value", None) or getattr(e, "x", None) or (1 + attempt)
+            try:
+                wait = float(wait)
+            except Exception:
+                wait = 1.0 + attempt
+            wait = min(max(wait, 0.5), 30.0)
+            logger.debug("get_messages retry %s: %s (sleep %.1fs)", attempt, e, wait)
+            await asyncio.sleep(wait)
+    logger.warning("resolve_message failed: %s", last_err)
+    return None
+
+
+async def _stream_file_chunks(
+    client: Client,
+    message,
+    offset: int = 0,
+    limit: int = 0,
+):
+    """
+    FileToLink ByteStreamer.stream_file:
+      chunk_offset = offset // 1MiB
+      chunk_limit  = ceil(limit / 1MiB)
+    Yields raw 1MiB-oriented chunks from Telegram.
+    """
+    chunk_offset = offset // TG_CHUNK
+    chunk_limit = (limit + TG_CHUNK - 1) // TG_CHUNK if limit > 0 else 0
+
+    for attempt in range(4):
+        try:
+            async for chunk in client.stream_media(
+                message, offset=chunk_offset, limit=chunk_limit
+            ):
+                if chunk:
+                    yield bytes(chunk)
+            return
+        except Exception as e:
+            wait = getattr(e, "value", None) or getattr(e, "x", None) or (1 + attempt)
+            try:
+                wait = float(wait)
+            except Exception:
+                wait = 1.0 + attempt
+            wait = min(max(wait, 0.5), 30.0)
+            logger.warning("stream_media retry %s: %s (sleep %.1fs)", attempt, e, wait)
+            await asyncio.sleep(wait)
+    raise HTTPException(status_code=502, detail="Telegram stream failed after retries")
 
 
 async def _download_byte_range(client: Client, message, start: int, end: int):
-    """
-    Yield exact bytes [start, end] inclusive via stream_media.
-
-    wzgram offset/limit are CHUNK counts (1 MiB), not bytes. We fetch covering
-    chunks then trim the head/tail to the exact HTTP range.
-    """
+    """Yield exact bytes [start, end] — FileToLink stream_generator trim logic."""
     if end < start:
         return
-    length = end - start + 1
-    off_chunks = start // TG_CHUNK
-    head_skip = start % TG_CHUNK
-    # chunks needed to cover head_skip + length
-    need = head_skip + length
-    limit_chunks = max(1, math.ceil(need / TG_CHUNK))
+    content_length = end - start + 1
+    bytes_to_skip = start % TG_CHUNK
+    bytes_sent = 0
 
-    async with STREAM_SEMAPHORE:
-        yielded = 0
-        skip = head_skip
-        async for chunk in client.stream_media(
-            message, offset=off_chunks, limit=limit_chunks
-        ):
-            if not chunk:
+    async for chunk in _stream_file_chunks(
+        client, message, offset=start, limit=content_length
+    ):
+        if bytes_to_skip > 0:
+            if len(chunk) <= bytes_to_skip:
+                bytes_to_skip -= len(chunk)
                 continue
-            data = bytes(chunk)
-            if skip:
-                if skip >= len(data):
-                    skip -= len(data)
-                    continue
-                data = data[skip:]
-                skip = 0
-            if yielded + len(data) > length:
-                data = data[: length - yielded]
-            if data:
-                yield data
-                yielded += len(data)
-            if yielded >= length:
-                return
+            chunk = chunk[bytes_to_skip:]
+            bytes_to_skip = 0
+
+        remaining = content_length - bytes_sent
+        if len(chunk) > remaining:
+            chunk = chunk[:remaining]
+        if chunk:
+            yield chunk
+            bytes_sent += len(chunk)
+        if bytes_sent >= content_length:
+            return
 
 
 async def media_streamer(
@@ -124,11 +203,7 @@ async def media_streamer(
     if not live:
         raise HTTPException(status_code=503, detail="Telegram streaming session is unavailable")
 
-    primary = live[0]
-    message = await _resolve_message(primary, chat_id, message_id)
-    if message is None:
-        raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
-
+    # Parallel multi-session for large ranges (improvement over single ByteStreamer)
     n = min(len(live), MAX_PARALLEL_PARTS)
     if total < MIN_PART_BYTES * 2:
         n = 1
@@ -136,11 +211,17 @@ async def media_streamer(
         n = min(n, max(1, total // MIN_PART_BYTES))
 
     if n <= 1:
-        async for chunk in _download_byte_range(primary, message, start, end):
-            yield chunk
+        client = await _acquire_client(live)
+        try:
+            message = await _resolve_message(client, chat_id, message_id)
+            if message is None:
+                raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
+            async for chunk in _download_byte_range(client, message, start, end):
+                yield chunk
+        finally:
+            await _release_client(client)
         return
 
-    # Split byte range into ordered parts; each session fetches one part
     part_size = (total + n - 1) // n
     ranges = []
     cursor = start
@@ -151,18 +232,28 @@ async def media_streamer(
         if cursor > end:
             break
 
-    async def fetch_part(idx: int, p_start: int, p_end: int) -> bytes:
-        client = live[idx % len(live)]
+    async def fetch_part(p_start: int, p_end: int) -> bytes:
+        client = await _acquire_client(live)
         try:
-            msg = await _resolve_message(client, chat_id, message_id) or message
-        except Exception:
-            msg = message
-        buf = bytearray()
-        async for chunk in _download_byte_range(client, msg, p_start, p_end):
-            buf.extend(chunk)
-        return bytes(buf)
+            msg = await _resolve_message(client, chat_id, message_id)
+            if msg is None:
+                # try any other client
+                for alt in live:
+                    if alt is client:
+                        continue
+                    msg = await _resolve_message(alt, chat_id, message_id)
+                    if msg is not None:
+                        break
+            if msg is None:
+                raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
+            buf = bytearray()
+            async for chunk in _download_byte_range(client, msg, p_start, p_end):
+                buf.extend(chunk)
+            return bytes(buf)
+        finally:
+            await _release_client(client)
 
-    tasks = [asyncio.create_task(fetch_part(i, r0, r1)) for i, (r0, r1) in enumerate(ranges)]
+    tasks = [asyncio.create_task(fetch_part(r0, r1)) for r0, r1 in ranges]
     try:
         for task in tasks:
             data = await task
@@ -193,16 +284,21 @@ async def get_streaming_response(
     if not clients:
         raise HTTPException(status_code=503, detail="Telegram streaming session is unavailable")
 
+    # Full-file range → treat as non-partial (FileToLink behavior)
+    if start == 0 and end == file_size - 1:
+        partial = False
+
     safe_name = re.sub(r'[\r\n"\\]', "_", filename or "media")[:180]
     is_download = request.url.path.startswith("/dl/")
+    disposition = "attachment" if is_download else "inline"
     headers = {
-        "Accept-Ranges": "bytes",
+        "Content-Type": mime_type or "application/octet-stream",
         "Content-Length": str(end - start + 1),
         "Content-Disposition": (
-            f'{"attachment" if is_download else "inline"}; '
-            f'filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
+            f'{disposition}; filename="{safe_name}"; filename*=UTF-8\'\'{quote(safe_name)}'
         ),
-        "Cache-Control": "private, no-cache",
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=3600",
         "X-Content-Type-Options": "nosniff",
         "X-Accel-Buffering": "no",
     }
