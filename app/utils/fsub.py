@@ -1,27 +1,42 @@
-from telethon.tl.functions.channels import GetParticipantRequest
-from telethon.tl.types import ChannelParticipant, ChannelParticipantAdmin, ChannelParticipantCreator
-from telethon.errors import UserNotParticipantError
-from app.database.connection import settings
+from __future__ import annotations
+
 import logging
+
+from wzgram.enums import ChatMemberStatus
+from wzgram.errors import UserNotParticipant, ChatAdminRequired, ChannelPrivate
+
+from app.database.connection import settings
 
 logger = logging.getLogger(__name__)
 
-async def is_user_fsubbed(client, user_id):
+ACTIVE = {
+    ChatMemberStatus.MEMBER,
+    ChatMemberStatus.ADMINISTRATOR,
+    ChatMemberStatus.OWNER,
+    ChatMemberStatus.RESTRICTED,
+}
+
+
+async def is_user_fsubbed(client, user_id: int) -> bool:
     if not settings.FORCE_SUB_CHANNELS:
         return True
-        
-    channels = settings.fsub_list
-    for channel_id in channels:
+
+    for channel_id in settings.fsub_list:
         try:
-            participant = await client(GetParticipantRequest(channel_id, user_id))
-            if not isinstance(participant.participant, (ChannelParticipant, ChannelParticipantAdmin, ChannelParticipantCreator)):
+            member = await client.get_chat_member(channel_id, user_id)
+            status = member.status
+            if status not in ACTIVE:
                 return False
-        except UserNotParticipantError:
+        except UserNotParticipant:
+            return False
+        except (ChatAdminRequired, ChannelPrivate) as e:
+            logger.error(
+                "FSUB ERROR: cannot verify %s in %s (%s). "
+                "Bot must be admin in the force-sub channel.",
+                user_id, channel_id, e,
+            )
             return False
         except Exception as e:
-            logger.error(f"FSUB ERROR: Could not verify subscription for {user_id} in {channel_id}. Error: {e}")
-            logger.error("Ensure the bot is an ADMINISTRATOR in the channel and the channel ID is correct.")
-            # If we can't verify, we must block to fulfill the "must be in channel" requirement
+            logger.error("FSUB ERROR for %s in %s: %s", user_id, channel_id, e)
             return False
-            
     return True

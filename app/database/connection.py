@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SESSIONS: str = ""
     ADMIN_PANEL_TOKEN: str = ""
-    STREAM_CHUNK_SIZE: int = 524288
+    STREAM_CHUNK_SIZE: int = 1048576
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=True)
 
@@ -58,8 +58,8 @@ class Settings(BaseSettings):
     @field_validator("STREAM_CHUNK_SIZE")
     @classmethod
     def validate_chunk_size(cls, value: int) -> int:
-        if not 64 * 1024 <= value <= 1024 * 1024:
-            raise ValueError("STREAM_CHUNK_SIZE must be between 65536 and 1048576")
+        if not 64 * 1024 <= value <= 4 * 1024 * 1024:
+            raise ValueError("STREAM_CHUNK_SIZE must be between 65536 and 4194304")
         return value
 
     @property

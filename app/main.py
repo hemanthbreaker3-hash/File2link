@@ -34,9 +34,10 @@ async def lifespan(app: FastAPI):
         await mongo_client.admin.command("ping")
         await create_indexes()
         await load_custom_settings()
-        await session_manager.start()
+        session_manager.prepare_bot()
         register_handlers(session_manager.bot_client)
-        logger.info("HITLER service started")
+        await session_manager.start()
+        logger.info("HITLER service started (wzgram)")
         yield
     finally:
         await session_manager.stop()
@@ -101,40 +102,21 @@ async def stream_file(request: Request, short_code: str):
 
     await files_col.update_one({"short_code": short_code}, {"$inc": {"access_count": 1}})
 
-    # Use all available clients for ultra-high-speed downloads
-    clients = session_manager.get_all_clients()
-    if not clients:
+    all_clients = session_manager.get_all_clients()
+    if not all_clients:
         raise HTTPException(status_code=503, detail="Telegram sessions are unavailable")
-    client = session_manager.get_client()
-    
-    try:
-        # Fetch the message that contains the media
-        msg = await client.get_messages(file_data['chat_id'], ids=file_data['message_id'])
-        if not msg or not msg.media:
-            raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
-        
-        file = msg.media
-        # Some media types are nested
-        if hasattr(file, 'document'):
-            file = file.document
-        elif hasattr(file, 'photo'):
-            file = file.photo
-            
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("Error fetching Telegram media")
-        raise HTTPException(status_code=502, detail="Unable to retrieve media from Telegram")
 
     return await get_streaming_response(
-        [client],  # Keep the media reference bound to the session that fetched it.
-        file=file,
-        file_size=file_data['file_size'],
-        filename=file_data['filename'],
-        mime_type=file_data['mime_type'],
+        clients=all_clients,
+        chat_id=file_data["chat_id"],
+        message_id=file_data["message_id"],
+        file_size=file_data["file_size"],
+        filename=file_data["filename"],
+        mime_type=file_data["mime_type"],
         request=request,
         chunk_size=settings.STREAM_CHUNK_SIZE,
     )
+
 
 
 # ─── Audio Track Discovery API ────────────────────────────────────────────────
@@ -155,22 +137,20 @@ async def get_tracks(short_code: str):
     client = session_manager.get_client()
     
     try:
-        msg = await client.get_messages(file_data['chat_id'], ids=file_data['message_id'])
-        if not msg or not msg.media:
+        msg = await client.get_messages(file_data['chat_id'], file_data['message_id'])
+        if isinstance(msg, list):
+            msg = msg[0] if msg else None
+        if not msg:
             raise HTTPException(status_code=404, detail="Media no longer available")
-        
-        media = msg.media
-        
-        # Photos don't have audio tracks
-        if hasattr(media, 'photo') and not hasattr(media, 'document'):
+
+        if msg.photo and not (msg.document or msg.video or msg.audio):
             return JSONResponse({
                 "video_tracks": [],
                 "audio_tracks": [],
                 "subtitle_tracks": [],
                 "has_multiple_audio": False
             })
-        
-        # Pass the message for download_media fallback, and media for iter_download
+
         tracks_info = await probe_tracks(client, msg, file_data['file_size'])
         
         # Only cache if no error
@@ -193,15 +173,7 @@ async def get_tracks(short_code: str):
 
 @app.get("/remux/{short_code}")
 async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int = 1):
-    """
-    Stream media as browser-friendly fragmented MP4 with selected audio track.
-    Audio is re-encoded to AAC by default so AC3/DTS/TrueHD/etc. play with sound
-    in Chrome/Safari/Firefox. Pass aac=0 to stream-copy audio only.
-
-    Query params:
-        audio: Audio track index (0-based, default 0)
-        aac: 1 = force AAC (default), 0 = stream copy audio
-    """
+    """Browser-friendly fragmented MP4; AAC by default for universal audio."""
     file_data = await files_col.find_one({"short_code": short_code})
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="File not found or expired")
@@ -209,32 +181,22 @@ async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int
         raise HTTPException(status_code=400, detail="Invalid audio track")
 
     client = session_manager.get_client()
-
     try:
-        msg = await client.get_messages(file_data['chat_id'], ids=file_data['message_id'])
-        if not msg or not msg.media:
-            raise HTTPException(status_code=404, detail="Media no longer available")
-
-        file = msg.media
-        if hasattr(file, 'document'):
-            file = file.document
-        elif hasattr(file, 'photo'):
-            file = file.photo
-
         return await get_remux_response(
             client=client,
-            file=file,
-            file_size=file_data['file_size'],
-            filename=file_data['filename'],
+            chat_id=file_data["chat_id"],
+            message_id=file_data["message_id"],
+            file_size=file_data["file_size"],
+            filename=file_data["filename"],
             audio_track=audio,
             force_aac=bool(aac),
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Remux error: {e}")
+        logger.error("Remux error: %s", e)
         raise HTTPException(status_code=500, detail="Error starting remux stream")
+
 
 
 if __name__ == "__main__":

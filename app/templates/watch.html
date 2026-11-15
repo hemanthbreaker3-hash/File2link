@@ -2,14 +2,57 @@
 {% block title %}{{ file.filename }} · HITLER{% endblock %}
 {% block head %}
 <style>
+  .player-shell{
+    position:relative;
+    border-radius:20px;
+    padding:2px;
+    overflow:hidden;
+    background:#0a0a14;
+    box-shadow:0 8px 40px rgba(0,0,0,.55),0 0 28px rgba(59,130,246,.18),0 0 48px rgba(239,68,68,.1);
+  }
+  .player-shell .neon-ribbon{
+    position:absolute;
+    inset:-40%;
+    background:conic-gradient(
+      from 0deg,
+      #3b82f6,
+      #22d3ee,
+      #ef4444,
+      #f472b6,
+      #a855f7,
+      #3b82f6
+    );
+    animation:ribbon-rotate 1.6s linear infinite;
+    z-index:0;
+    pointer-events:none;
+  }
+  @keyframes ribbon-rotate{
+    to{ transform: rotate(360deg); }
+  }
   .player-box{
     background:#000;
-    border:1px solid var(--line);
-    border-radius:16px;
+    border-radius:18px;
     overflow:hidden;
     position:relative;
-    box-shadow:0 0 0 1px rgba(59,130,246,.15),0 8px 40px rgba(0,0,0,.5);
+    z-index:1;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
   }
+  /* Glass edge overlay */
+  .player-box::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    border-radius:18px;
+    background:linear-gradient(145deg,rgba(255,255,255,.1),transparent 35%,transparent 65%,rgba(59,130,246,.05));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 0 rgba(0,0,0,.25);
+    pointer-events:none;
+    z-index:3;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .player-shell .neon-ribbon{ animation: none; }
+  }
+  .player-box video{ position:relative; z-index:1; }
+  .player-box .gesture-hint{ z-index:4; }
   video{
     display:block;width:100%;max-height:72vh;background:#000;
     aspect-ratio:16/9;touch-action:pan-x;
@@ -127,14 +170,17 @@
 {% block content %}
 <div class="watch-grid">
   <section>
-    <div class="player-box">
-      <video id="player" controls playsinline preload="metadata" crossorigin="anonymous">
-        <source id="video-source" src="" type="video/mp4">
-        Your browser cannot play this media.
-      </video>
-      <div class="gesture-hint" id="gesture-hint" aria-live="polite">
-        <span id="brightness-label">Brightness 100%</span>
-        <span id="volume-label">Volume 100%</span>
+    <div class="player-shell">
+      <div class="neon-ribbon" aria-hidden="true"></div>
+      <div class="player-box">
+        <video id="player" controls playsinline preload="auto" crossorigin="anonymous">
+          <source id="video-source" src="" type="video/mp4">
+          Your browser cannot play this media.
+        </video>
+        <div class="gesture-hint" id="gesture-hint" aria-live="polite">
+          <span id="brightness-label">Brightness 100%</span>
+          <span id="volume-label">Volume 100%</span>
+        </div>
       </div>
     </div>
     <div class="card info" style="margin-top:12px">
@@ -157,6 +203,7 @@
       <div class="tools">
         <a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>
         <button class="btn" type="button" onclick="copyStream()">Copy stream URL</button>
+        <button class="btn" type="button" id="fix-audio-btn" onclick="enableCompatibleMode()">Fix audio</button>
       </div>
       <div id="copy-status" class="copy-ok"></div>
     </div>
@@ -190,41 +237,53 @@ const FILE_NAME = {{ file.filename|tojson }};
 const INTENT_MIME = (!PLAYER_MIME || PLAYER_MIME === 'application/octet-stream') ? 'video/*' : PLAYER_MIME;
 const player = document.getElementById('player');
 
-// Prefer remux→AAC for containers/codecs browsers often play video-only (MKV/AVI/TS + AC3/DTS).
-// Native progressive MP4/WebM can stay on direct stream for seeking/range support.
-function needsCompatibleRemux() {
-  const mime = (PLAYER_MIME || '').toLowerCase();
-  const name = (FILE_NAME || '').toLowerCase();
-  if (mime.includes('mp4') || mime.includes('webm') || mime.includes('ogg')) return false;
-  if (/\.(mp4|webm|m4v|ogv|ogg)(\?|$)/i.test(name)) return false;
-  // mkv, avi, ts, m2ts, mov (often non-browser audio), flv, wmv, etc.
-  return true;
-}
+// Fast path: direct multi-connection /stream (range requests, parallel sessions).
+// Compatible path: /remux?aac=1 when audio is silent or user picks another track.
+let useCompatible = false;
 
 function primaryPlayUrl(audioIndex) {
   const idx = (audioIndex === undefined || audioIndex === null) ? 0 : audioIndex;
-  if (needsCompatibleRemux()) {
+  if (useCompatible) {
     return REMUX_URL + '?audio=' + encodeURIComponent(idx) + '&aac=1';
   }
   return STREAM_URL;
 }
 
-// Set initial source for reliable audio+video in the browser
 (function initSource() {
   const src = primaryPlayUrl(0);
   const sourceEl = document.getElementById('video-source');
   if (sourceEl) {
     sourceEl.src = src;
-    sourceEl.type = needsCompatibleRemux() ? 'video/mp4' : (PLAYER_MIME || 'video/mp4');
+    sourceEl.type = PLAYER_MIME || 'video/mp4';
   }
   player.src = src;
 })();
+
+async function enableCompatibleMode() {
+  if (useCompatible) return;
+  useCompatible = true;
+  const statusEl = document.getElementById('track-status');
+  const box = document.getElementById('track-box');
+  if (box) box.style.display = 'flex';
+  if (statusEl) {
+    statusEl.classList.remove('error');
+    statusEl.textContent = 'Switching to compatible audio…';
+  }
+  await switchAudio(currentAudioIndex || 0);
+}
 
 function androidIntent(url, pkg, mime) {
   const u = new URL(url);
   const scheme = u.protocol.replace(':','');
   return `intent://${u.host}${u.pathname}${u.search}#Intent;scheme=${scheme};action=android.intent.action.VIEW;type=${mime || 'video/*'};package=${pkg};S.browser_fallback_url=${encodeURIComponent(url)};end`;
 }
+
+/** HV Stream custom scheme: intent://play?url=<encoded>#Intent;scheme=hvstream;package=com.hvstreamplayer.app;... */
+function hvStreamIntent(url) {
+  const encoded = encodeURIComponent(url);
+  return `intent://play?url=${encoded}#Intent;scheme=hvstream;package=com.hvstreamplayer.app;S.browser_fallback_url=${encoded};end`;
+}
+
 function addPlayer(gridId, label, href) {
   const a = document.createElement('a');
   a.className = 'pbtn';
@@ -235,20 +294,34 @@ function addPlayer(gridId, label, href) {
 }
 
 const android = [
+  ['HV Stream', null],  // special intent
+  ['PLAYit', 'com.playit.videoplayer'],
   ['VLC', 'org.videolan.vlc'],
   ['MX Player', 'com.mxtech.videoplayer.ad'],
   ['Just Player', 'com.brouken.player'],
   ['mpv', 'is.xyz.mpv'],
   ['Kodi', 'org.xbmc.kodi']
 ];
-android.forEach(([n,p]) => addPlayer('mobile-grid', n, androidIntent(STREAM_URL, p, INTENT_MIME)));
+android.forEach(([n, p]) => {
+  if (n === 'HV Stream') {
+    addPlayer('mobile-grid', n, hvStreamIntent(STREAM_URL));
+  } else {
+    addPlayer('mobile-grid', n, androidIntent(STREAM_URL, p, INTENT_MIME));
+  }
+});
 addPlayer('mobile-grid', 'Copy URL', '#');
+
+addPlayer('tablet-grid', 'HV Stream', hvStreamIntent(STREAM_URL));
+addPlayer('tablet-grid', 'PLAYit', androidIntent(STREAM_URL, 'com.playit.videoplayer', INTENT_MIME));
 addPlayer('tablet-grid', 'VLC', androidIntent(STREAM_URL, 'org.videolan.vlc', INTENT_MIME));
 addPlayer('tablet-grid', 'MX Player', androidIntent(STREAM_URL, 'com.mxtech.videoplayer.ad', INTENT_MIME));
 addPlayer('tablet-grid', 'Just Player', androidIntent(STREAM_URL, 'com.brouken.player', INTENT_MIME));
 addPlayer('tablet-grid', 'Kodi', androidIntent(STREAM_URL, 'org.xbmc.kodi', INTENT_MIME));
+
 addPlayer('desktop-grid', 'Open stream URL', STREAM_URL);
 addPlayer('desktop-grid', 'Copy URL', '#');
+
+addPlayer('tv-grid', 'HV Stream', hvStreamIntent(STREAM_URL));
 addPlayer('tv-grid', 'VLC', androidIntent(STREAM_URL, 'org.videolan.vlc', INTENT_MIME));
 addPlayer('tv-grid', 'Kodi', androidIntent(STREAM_URL, 'org.xbmc.kodi', INTENT_MIME));
 addPlayer('tv-grid', 'Just Player', androidIntent(STREAM_URL, 'com.brouken.player', INTENT_MIME));

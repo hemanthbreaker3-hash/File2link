@@ -2,25 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
-from telethon import TelegramClient
+from wzgram import Client
 
 logger = logging.getLogger(__name__)
-STREAM_SEMAPHORE = asyncio.Semaphore(32)
 
-# Codecs browsers can usually play inside MP4 / MSE without transcoding.
-BROWSER_SAFE_AUDIO = {
-    "aac", "mp3", "mp4a", "opus", "vorbis", "flac",
-    "pcm_s16le", "pcm_s24le", "pcm_f32le",
-}
+STREAM_SEMAPHORE = asyncio.Semaphore(128)
+# wzgram/Pyrogram stream_media uses fixed ~1 MiB chunks; offset/limit are in CHUNKS not bytes
+TG_CHUNK = 1024 * 1024
+DEFAULT_CHUNK = TG_CHUNK
+MAX_PARALLEL_PARTS = 8
+MIN_PART_BYTES = 2 * 1024 * 1024
 
 
 def parse_range_header(request: Request, file_size: int) -> tuple[int, int, bool]:
-    """Return start, end, partial; reject malformed and unsatisfiable ranges."""
     header = request.headers.get("range")
     if not header:
         return 0, max(file_size - 1, 0), False
@@ -54,30 +54,145 @@ def parse_range_header(request: Request, file_size: int) -> tuple[int, int, bool
     return start, end, True
 
 
-async def media_streamer(client: TelegramClient, media, start: int, end: int, chunk_size: int = 512 * 1024):
-    """Ordered, bounded-memory Telegram streaming with a global concurrency cap."""
-    remaining = end - start + 1
+async def _resolve_message(client: Client, chat_id: int, message_id: int):
+    msg = await client.get_messages(chat_id, message_id)
+    if not msg or (isinstance(msg, list) and not msg):
+        return None
+    if isinstance(msg, list):
+        msg = msg[0]
+    if not msg or not (
+        msg.media or msg.document or msg.video or msg.audio
+        or msg.animation or msg.voice or msg.video_note or msg.photo
+    ):
+        return None
+    return msg
+
+
+async def _download_byte_range(client: Client, message, start: int, end: int):
+    """
+    Yield exact bytes [start, end] inclusive via stream_media.
+
+    wzgram offset/limit are CHUNK counts (1 MiB), not bytes. We fetch covering
+    chunks then trim the head/tail to the exact HTTP range.
+    """
+    if end < start:
+        return
+    length = end - start + 1
+    off_chunks = start // TG_CHUNK
+    head_skip = start % TG_CHUNK
+    # chunks needed to cover head_skip + length
+    need = head_skip + length
+    limit_chunks = max(1, math.ceil(need / TG_CHUNK))
+
     async with STREAM_SEMAPHORE:
-        async for chunk in client.iter_download(media, offset=start, limit=remaining, request_size=chunk_size):
-            if chunk:
-                yield bytes(chunk)
+        yielded = 0
+        skip = head_skip
+        async for chunk in client.stream_media(
+            message, offset=off_chunks, limit=limit_chunks
+        ):
+            if not chunk:
+                continue
+            data = bytes(chunk)
+            if skip:
+                if skip >= len(data):
+                    skip -= len(data)
+                    continue
+                data = data[skip:]
+                skip = 0
+            if yielded + len(data) > length:
+                data = data[: length - yielded]
+            if data:
+                yield data
+                yielded += len(data)
+            if yielded >= length:
+                return
+
+
+async def media_streamer(
+    clients: list[Client],
+    chat_id: int,
+    message_id: int,
+    start: int,
+    end: int,
+    chunk_size: int = DEFAULT_CHUNK,
+):
+    total = end - start + 1
+    if total <= 0:
+        return
+
+    live = [c for c in clients if c is not None]
+    if not live:
+        raise HTTPException(status_code=503, detail="Telegram streaming session is unavailable")
+
+    primary = live[0]
+    message = await _resolve_message(primary, chat_id, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
+
+    n = min(len(live), MAX_PARALLEL_PARTS)
+    if total < MIN_PART_BYTES * 2:
+        n = 1
+    else:
+        n = min(n, max(1, total // MIN_PART_BYTES))
+
+    if n <= 1:
+        async for chunk in _download_byte_range(primary, message, start, end):
+            yield chunk
+        return
+
+    # Split byte range into ordered parts; each session fetches one part
+    part_size = (total + n - 1) // n
+    ranges = []
+    cursor = start
+    for _ in range(n):
+        part_end = min(cursor + part_size - 1, end)
+        ranges.append((cursor, part_end))
+        cursor = part_end + 1
+        if cursor > end:
+            break
+
+    async def fetch_part(idx: int, p_start: int, p_end: int) -> bytes:
+        client = live[idx % len(live)]
+        try:
+            msg = await _resolve_message(client, chat_id, message_id) or message
+        except Exception:
+            msg = message
+        buf = bytearray()
+        async for chunk in _download_byte_range(client, msg, p_start, p_end):
+            buf.extend(chunk)
+        return bytes(buf)
+
+    tasks = [asyncio.create_task(fetch_part(i, r0, r1)) for i, (r0, r1) in enumerate(ranges)]
+    try:
+        for task in tasks:
+            data = await task
+            view = memoryview(data)
+            step = max(chunk_size, 256 * 1024)
+            for off in range(0, len(view), step):
+                yield bytes(view[off : off + step])
+    except Exception:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        raise
 
 
 async def get_streaming_response(
-    clients: list[TelegramClient],
-    file,
+    clients: list[Client],
+    chat_id: int,
+    message_id: int,
     file_size: int,
     filename: str,
     mime_type: str,
     request: Request,
-    chunk_size: int = 512 * 1024,
+    chunk_size: int = DEFAULT_CHUNK,
 ):
     if file_size <= 0:
         raise HTTPException(status_code=422, detail="Media file has an invalid size")
     start, end, partial = parse_range_header(request, file_size)
-    client = next((item for item in clients if item and item.is_connected()), None)
-    if client is None:
+    if not clients:
         raise HTTPException(status_code=503, detail="Telegram streaming session is unavailable")
+
     safe_name = re.sub(r'[\r\n"\\]', "_", filename or "media")[:180]
     is_download = request.url.path.startswith("/dl/")
     headers = {
@@ -89,11 +204,13 @@ async def get_streaming_response(
         ),
         "Cache-Control": "private, no-cache",
         "X-Content-Type-Options": "nosniff",
+        "X-Accel-Buffering": "no",
     }
     if partial:
         headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+
     return StreamingResponse(
-        media_streamer(client, file, start, end, chunk_size),
+        media_streamer(clients, chat_id, message_id, start, end, chunk_size),
         status_code=206 if partial else 200,
         headers=headers,
         media_type=mime_type or "application/octet-stream",
@@ -101,58 +218,35 @@ async def get_streaming_response(
 
 
 def _build_ffmpeg_cmd(audio_track: int, force_aac: bool = True) -> list[str]:
-    """
-    Build ffmpeg argv for browser-friendly fragmented MP4.
-
-    - Video: stream copy when present
-    - Audio: copy if already browser-safe; otherwise re-encode to AAC
-    - force_aac=True (default) always encodes audio to AAC for maximum browser support
-      (fixes silent video for AC3/DTS/TrueHD/E-AC3/etc.)
-    """
     cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-fflags", "+genpts+discardcorrupt",
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-fflags", "+genpts+discardcorrupt", "-threads", "0",
         "-i", "pipe:0",
-        # Prefer first video stream if any; keep going if audio-only
-        "-map", "0:v:0?",
-        "-map", f"0:a:{audio_track}?",
+        "-map", "0:v:0?", "-map", f"0:a:{audio_track}?",
         "-c:v", "copy",
     ]
     if force_aac:
-        # Universal browser audio: AAC-LC stereo (or keep channel count up to 6)
-        cmd += [
-            "-c:a", "aac",
-            "-b:a", "192k",
-            "-ac", "2",
-            "-ar", "48000",
-            "-profile:a", "aac_low",
-        ]
+        cmd += ["-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "48000", "-profile:a", "aac_low"]
     else:
         cmd += ["-c:a", "copy"]
-
-    cmd += [
-        "-movflags", "frag_keyframe+empty_moov+default_base_moof+faststart",
-        "-f", "mp4",
-        "pipe:1",
-    ]
+    cmd += ["-movflags", "frag_keyframe+empty_moov+default_base_moof+faststart", "-f", "mp4", "pipe:1"]
     return cmd
 
 
 async def remux_streamer(
-    client: TelegramClient,
-    media,
+    client: Client,
+    chat_id: int,
+    message_id: int,
     file_size: int,
     audio_track: int = 0,
     force_aac: bool = True,
 ):
-    """
-    FFmpeg remux/transcode to fragmented MP4 for browser playback.
-    By default audio is re-encoded to AAC so AC3/DTS/etc. play with sound.
-    """
     if audio_track < 0 or audio_track > 32:
         raise HTTPException(status_code=400, detail="Invalid audio track")
+
+    message = await _resolve_message(client, chat_id, message_id)
+    if message is None:
+        raise HTTPException(status_code=404, detail="Media no longer available on Telegram")
 
     cmd = _build_ffmpeg_cmd(audio_track, force_aac=force_aac)
     logger.info("Starting remux ffmpeg: %s", " ".join(cmd))
@@ -166,14 +260,10 @@ async def remux_streamer(
 
     async def feed():
         try:
-            async for chunk in client.iter_download(
-                media, offset=0, limit=file_size, request_size=512 * 1024
-            ):
-                if process.returncode is not None:
+            async for chunk in _download_byte_range(client, message, 0, max(file_size - 1, 0)):
+                if process.returncode is not None or process.stdin is None:
                     break
-                if process.stdin is None:
-                    break
-                process.stdin.write(bytes(chunk))
+                process.stdin.write(chunk)
                 await process.stdin.drain()
         except Exception as e:
             logger.warning("Remux feed error: %s", e)
@@ -187,7 +277,7 @@ async def remux_streamer(
     feed_task = asyncio.create_task(feed())
     try:
         while True:
-            chunk = await process.stdout.read(256 * 1024)
+            chunk = await process.stdout.read(512 * 1024)
             if not chunk:
                 break
             yield chunk
@@ -196,9 +286,8 @@ async def remux_streamer(
             _, stderr = await asyncio.wait_for(process.communicate(), timeout=15)
         except asyncio.TimeoutError:
             stderr = b""
-        if process.returncode and process.returncode != 0:
-            err_text = (stderr or b"").decode(errors="replace")[-1500:]
-            logger.error("FFmpeg remux failed (code %s): %s", process.returncode, err_text)
+        if process.returncode:
+            logger.error("FFmpeg remux failed: %s", (stderr or b"").decode(errors="replace")[-1500:])
     except asyncio.CancelledError:
         raise
     finally:
@@ -220,8 +309,9 @@ async def remux_streamer(
 
 
 async def get_remux_response(
-    client: TelegramClient,
-    file,
+    client: Client,
+    chat_id: int,
+    message_id: int,
     file_size: int,
     filename: str,
     audio_track: int = 0,
@@ -230,11 +320,12 @@ async def get_remux_response(
     base_name = (filename or "media").rsplit(".", 1)[0]
     safe_name = re.sub(r'[\r\n"\\]', "_", f"{base_name}.mp4")[:180]
     return StreamingResponse(
-        remux_streamer(client, file, file_size, audio_track, force_aac=force_aac),
+        remux_streamer(client, chat_id, message_id, file_size, audio_track, force_aac=force_aac),
         media_type="video/mp4",
         headers={
             "Content-Disposition": f'inline; filename="{safe_name}"',
             "Cache-Control": "no-store",
             "Accept-Ranges": "none",
+            "X-Accel-Buffering": "no",
         },
     )
