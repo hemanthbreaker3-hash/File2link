@@ -19,11 +19,11 @@
       --muted:#8b8db0;
       --blue:#3b82f6;
       --blue-glow:#60a5fa;
-      --red:#3b82f6;
-      --red-glow:#93c5fd;
-      --accent:#2563eb;
+      --red:#ef4444;
+      --red-glow:#f87171;
+      --accent:#ef4444;
       --neon-blue:0 0 12px rgba(59,130,246,.55),0 0 28px rgba(59,130,246,.25);
-      --neon-red:0 0 12px rgba(59,130,246,.55),0 0 28px rgba(59,130,246,.25);
+      --neon-red:0 0 12px rgba(239,68,68,.55),0 0 28px rgba(239,68,68,.25);
       --radius:14px;
     }
     *{box-sizing:border-box}
@@ -31,7 +31,7 @@
     body{
       margin:0;
       background:radial-gradient(1200px 600px at 10% -10%,rgba(59,130,246,.12),transparent 55%),
-                 radial-gradient(900px 500px at 100% 0%,rgba(59,130,246,.10),transparent 50%),
+                 radial-gradient(900px 500px at 100% 0%,rgba(239,68,68,.10),transparent 50%),
                  var(--bg);
       color:var(--text);
       font:400 15px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
@@ -85,7 +85,7 @@
       text-overflow:ellipsis;
     }
     .topbar-title span{
-      color:var(--blue-glow);
+      color:var(--red);
       text-shadow:var(--neon-red);
     }
     .brand-link{
@@ -115,11 +115,11 @@
     .btn:hover{border-color:var(--blue);box-shadow:var(--neon-blue);transform:translateY(-1px)}
     .btn:active{transform:translateY(0)}
     .accent{
-      background:linear-gradient(135deg,#2563eb,#1d4ed8);
-      border-color:var(--blue-glow);
+      background:linear-gradient(135deg,#ef4444,#dc2626);
+      border-color:var(--red);
       box-shadow:var(--neon-red);
     }
-    .accent:hover{border-color:var(--red-glow);box-shadow:0 0 16px rgba(59,130,246,.7)}
+    .accent:hover{border-color:var(--red-glow);box-shadow:0 0 16px rgba(239,68,68,.7)}
     main{padding:28px 0 100px}
     .footer{text-align:center;color:#555;font-size:12px;padding:28px 0 80px;border-top:1px solid var(--line)}
     img,video,iframe{max-width:100%}
@@ -139,13 +139,13 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="topbar-logo" href="/" title="HITLER">
-      <img src="/static/images/logo.jpg" alt="HITLER logo" width="38" height="38" loading="eager" decoding="async">
+      <img src="https://files.catbox.moe/mau8mb.jpg" alt="HITLER logo" width="38" height="38" loading="eager" decoding="async">
     </a>
-    <div class="topbar-title"><strong>HITLER YT</strong></div>
+    <div class="topbar-title">HiTLER <span>YT</span> official</div>
     <a class="brand-link" href="https://t.me/HiTLERYT" target="_blank" rel="noopener">@hitleryt</a>
   </div>
 </header>
 <main><div class="wrap">{% block content %}{% endblock %}</div></main>
-<footer class="footer"><a href="https://t.me/HiTLERYT" target="_blank" rel="noopener">HITLER YT · @hitleryt</a></footer>
+<footer class="footer"><a href="https://t.me/HiTLERYT" target="_blank" rel="noopener">HITLER · @hitleryt</a></footer>
 </body>
 </html>

@@ -2,14 +2,13 @@
 {% block title %}{{ file.filename }} · HITLER{% endblock %}
 {% block head %}
 <style>
-  {% if not player_settings.built_in_player_enabled %}.player-shell,.card.info{display:none!important}{% endif %}{% if not player_settings.streaming_enabled %}.player-shell{display:none!important}{% endif %}
   .player-shell{
     position:relative;
     border-radius:20px;
     padding:2px;
     overflow:hidden;
     background:#0a0a14;
-    box-shadow:0 8px 40px rgba(0,0,0,.55),0 0 28px rgba(59,130,246,.18),0 0 48px rgba(59,130,246,.1);
+    box-shadow:0 8px 40px rgba(0,0,0,.55),0 0 28px rgba(59,130,246,.18),0 0 48px rgba(239,68,68,.1);
   }
   .player-shell .neon-ribbon{
     position:absolute;
@@ -18,8 +17,8 @@
       from 0deg,
       #3b82f6,
       #22d3ee,
-      #3b82f6,
-      #60a5fa,
+      #ef4444,
+      #f472b6,
       #a855f7,
       #3b82f6
     );
@@ -116,7 +115,7 @@
     transition:background .2s,color .2s,box-shadow .2s;
   }
   .tab.active{
-    background:linear-gradient(135deg,rgba(59,130,246,.25),rgba(59,130,246,.2));
+    background:linear-gradient(135deg,rgba(59,130,246,.25),rgba(239,68,68,.2));
     color:#fff;
     box-shadow:inset 0 0 0 1px rgba(59,130,246,.35);
   }
@@ -202,7 +201,7 @@
       </div>
       <p class="muted" style="font-size:11px;margin:8px 0 0">Touch gestures: swipe up/down on the right for volume and on the left for brightness. Boost is browser playback only; external players use their own audio controls.</p>
       <div class="tools">
-        {% if player_settings.downloads_enabled %}<a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>{% endif %}
+        <a class="btn accent" href="/dl/{{ file.short_code }}">Download</a>
         <button class="btn" type="button" onclick="copyStream()">Copy stream URL</button>
         <button class="btn" type="button" id="fix-audio-btn" onclick="enableCompatibleMode()">Fix audio</button>
       </div>
@@ -727,19 +726,5 @@ player.addEventListener('pointercancel', () => { gestureStart = null; }, { passi
 updateBrightness();
 updateGain();
 loadTracks();
-
-// Optional best-effort external-player handoff. Browsers do not expose a reliable
-// installed-app inventory; only Android's explicit VLC intent is attempted.
-{% if player_settings.auto_player_redirect %}
-(function autoPlayerHandoff(){
-  const ua=navigator.userAgent||'';
-  const streamUrl=location.origin+'/stream/{{ file.short_code }}';
-  if (/Android/i.test(ua)) {
-    const fallback=location.href;
-    const intent='intent:'+streamUrl.replace(/^https?:\/\//,'')+'#Intent;scheme=https;type=video/*;package=org.videolan.vlc;S.browser_fallback_url='+encodeURIComponent(fallback)+';end';
-    setTimeout(()=>{ location.href=intent; },250);
-  }
-})();
-{% endif %}
 </script>
 {% endblock %}

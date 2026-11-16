@@ -1,134 +1,189 @@
-# HITLER YT — Telegram Media Bot & OTT Website
+# HITLER — Telegram Media Link Service
 
-A Telegram media-link bot and streaming backend with a blue, responsive HITLER YT website, MongoDB-backed catalog, TMDB publishing, and a Vercel gateway.
+Telegram bot and FastAPI web application for creating direct download and browser-streaming links for media messages.
 
-> **Deployment architecture:** Vercel hosts the public website domain/gateway. The Telegram bot, MongoDB access, and high-bandwidth streaming engine require a persistent Python backend (recommended: VPS/Docker). Vercel serverless functions are not a replacement for a continuously running Telegram bot or large media streams. Deploying the repository root to Vercel is supported, but `BACKEND_URL` must point to the running backend.
+**Telegram:** https://t.me/HiTLERYT  
+**Username:** @hitleryt
 
 ## Features
 
-- Telegram bot media link generation, force-subscription checks, rate limits, media information, screenshots, sample video, deletion, admin stats and broadcast tools.
-- FastAPI backend with Telegram media streaming, byte-range support, track discovery and remux endpoints.
-- Responsive blue HITLER YT website and watch page.
-- MongoDB-backed runtime settings and title catalog.
-- Basic-auth protected `/panel` dashboard and `/admin` dashboard.
-- Download, streaming, built-in player and best-effort Android VLC handoff settings.
-- All-users/admins-only/owners-only access mode setting.
-- TMDB search and one-click page publishing from Telegram `/search` and the admin dashboard.
-- `/categories`, `/edit`, and `/panel` admin commands link to the secure web CMS.
-- Default Movies and Web Series categories; custom categories can be created and deleted (default categories are protected).
-- Movie/series pages support metadata, categories, groups and multiple buttons per group through the catalog API.
+- Telegram bot file intake and generated download/watch links.
+- HTTP byte-range streaming for browser seeking and downloads.
+- Optional FFmpeg stream-copy remux for audio-track selection.
+- Android external-player intents for VLC, MX Player, Just Player, mpv and Kodi, plus a copyable stream URL.
+- Browser-only Web Audio volume amplification up to 300% and touch controls (right side: volume; left side: brightness).
+- Persistent `/baseurl` command for the bot owner and configured admins.
+- MongoDB-backed file metadata and settings.
+- Docker Compose VPS deployment with MongoDB, Redis, health checks and restart policies.
 
-## 1. Configure the backend
+> Volume amplification and brightness adjustments apply to the built-in browser player. External players use their own volume and display controls. Device-level brightness APIs are not consistently exposed to mobile browsers.
 
-Copy `.env.example` to `.env` and configure at minimum:
+## Requirements
 
-```env
-API_ID=your_telegram_api_id
-API_HASH=your_telegram_api_hash
-BOT_TOKEN=your_bot_token
-OWNER_ID=your_telegram_user_id
-ADMINS=123456789,987654321
-MONGODB_URI=mongodb+srv://...
-DATABASE_NAME=tg_media_bot
-BASE_URL=https://your-project.vercel.app
-ADMIN_PANEL_TOKEN=use-a-long-random-secret
-TMDB_API_KEY=your_tmdb_v3_api_key
-```
+- Linux VPS with Docker Engine and Docker Compose plugin.
+- Public HTTPS domain pointing to the VPS (recommended for reliable Android intents and browser playback).
+- Telegram API ID/hash from `my.telegram.org`, bot token from BotFather, and the Telegram numeric owner ID.
 
-`ADMIN_PANEL_TOKEN` protects the website dashboard using HTTP Basic authentication (username: `admin`). The VPS deploy script generates a strong token if one is not set; retrieve it from the private backend `.env` file. Never commit `.env` or expose the token in client-side code. TMDB search is disabled until `TMDB_API_KEY` is configured.
+## VPS deployment
 
-Optional settings are documented in `.env.example`. MongoDB must be reachable from the backend host. Redis is optional for deployments that do not use the cache integration.
+### One-command style (Git clone + exported credentials)
 
-## 2. Deploy the backend (VPS / Docker)
-
-The bot and streaming backend must remain online. On a Linux VPS with Docker and Docker Compose installed:
+Clone the repository, enter its directory, export your own File2link credentials, then run `deploy.vps`. The script automatically writes the exported values into a private `.env` file, validates them, builds the Docker image, starts the stack, and waits for the health endpoint.
 
 ```bash
-cp .env.example .env
-nano .env
+rm -rf file2link
+git clone YOUR_FILE2LINK_GITHUB_REPO file2link
+cd file2link
 
+export API_ID="YOUR_API_ID"
+export API_HASH="YOUR_API_HASH"
+export BOT_TOKEN="YOUR_BOT_TOKEN"
+export OWNER_ID="YOUR_TELEGRAM_USER_ID"
+export ADMINS=""
+export CHANNEL_ID=""
+export FORCE_SUB_CHANNELS=""
+export MONGODB_URI="YOUR_MONGODB_URI"
+export DATABASE_NAME="file2link"
+
+ls deploy.vps
+chmod +x deploy.vps
+./deploy.vps
+```
+
+Replace the placeholders with credentials for this bot and the actual GitHub URL. Do not reuse credentials from another bot. Never commit `.env` or publish live tokens/passwords. The deployment script supports exported variables, `config.env`, or `.env` (precedence: exported shell variables, then `config.env`, then existing `.env`). It also accepts `APP_ID` as an alias for `API_ID`, `DATABASE_URI`/`DATABASE_URL` for `MONGODB_URI`, and `LOG_CHANNEL` for `CHANNEL_ID`.
+
+Alternatively, after exporting the same variables in your current shell, use the included helper:
+
+```bash
+chmod +x deploy-from-git.sh
+./deploy-from-git.sh YOUR_FILE2LINK_GITHUB_REPO file2link
+```
+
+The helper refuses to overwrite an existing directory. If you intentionally want a clean clone, remove that directory first.
+
+The script requires Docker Engine and Docker Compose (it installs Docker on supported Linux VPS systems when missing). By default, Compose starts local MongoDB and Redis containers. If `MONGODB_URI` points to MongoDB Atlas, the app uses that external database URI; the bundled MongoDB service remains available but is not the configured application database. Verify the deployment with:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 web
+curl -fsS http://127.0.0.1:8000/health
+```
+
+The health check confirms the web process is responding; it does not prove Telegram authorization, Atlas network access, DNS, firewall, TLS, or end-to-end playback.
+
+## Configuration
+
+| Variable | Required | Description |
+|---|---:|---|
+| `API_ID` | Yes | Telegram API ID |
+| `API_HASH` | Yes | Telegram API hash |
+| `BOT_TOKEN` | Yes | Telegram bot token |
+| `OWNER_ID` | Yes | Numeric Telegram owner ID |
+| `ADMINS` | No | Comma-separated admin Telegram IDs |
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `DATABASE_NAME` | No | MongoDB database name; defaults to `tg_media_bot` |
+| `REDIS_URL` | No | Redis URL; Compose default is `redis://redis:6379/0` |
+| `BASE_URL` | Yes in production | Public base URL, including `https://` |
+| `DEFAULT_EXPIRY` | No | Link lifetime in hours; `0` disables expiry |
+| `SESSIONS` | No | Comma-separated Telethon StringSession values |
+| `ADMIN_PANEL_TOKEN` | No | Enables `/admin` HTTP Basic auth; username is `admin` |
+| `STREAM_CHUNK_SIZE` | No | Stream read size from 64 KiB to 1 MiB |
+
+The admin panel is disabled unless `ADMIN_PANEL_TOKEN` is set. Do not expose an unprotected admin dashboard to the public internet.
+
+## Bot commands
+
+- `/start` — start the bot.
+- `/baseurl` — show the current public base URL.
+- `/baseurl https://your-domain.example` — validate, persist and activate a new base URL.
+- `/stats` — show basic bot statistics (owner/admin only).
+
+The base URL is stored in MongoDB and loaded at application startup. Newly generated links use the updated value without editing `.env` or restarting the service.
+
+## Streaming and player notes
+
+- Browser streaming supports standard single byte ranges and returns `206 Partial Content` for valid range requests; invalid ranges return `416`.
+- The streaming engine uses ordered, bounded-memory reads to avoid out-of-order/corrupted media. Multiple Telegram sessions are supported for session selection, but the media reference is downloaded through the same session that fetched it.
+- The `/remux/{short_code}?audio=N` endpoint requires FFmpeg and performs stream-copy remuxing; seeking is not available in remux mode.
+- Android external-player buttons use Android VIEW intents with the media MIME type. If a package is missing or an intent is blocked, copy the stream URL into the installed player's network-stream dialog.
+- Browser volume boost uses Web Audio and may be unavailable in browsers that block audio processing. High gain can cause distortion; keep the level at the lowest useful setting.
+
+## Reverse proxy
+
+Put the app behind Nginx, Caddy or another TLS reverse proxy. Forward requests to `127.0.0.1:8000`, preserve the `Range` and `Host` headers, and allow long-lived streaming responses. Do not buffer large streaming responses at the proxy.
+
+## Automatic public HTTPS URL with Cloudflare Quick Tunnel
+
+`./deploy.vps` now installs `cloudflared` automatically after the web health check and creates a systemd service named `file2link-cloudflared`. The deployment waits for Cloudflare to issue a `https://*.trycloudflare.com` URL, writes it to `.env`, stores it in MongoDB (`settings` collection, key `base_url`), and recreates the web container so the bot immediately uses it for newly generated download and watch buttons.
+
+The service starts again after VPS reboot. If Cloudflare issues a different Quick Tunnel URL after a reboot or service restart, the helper automatically updates `.env` and MongoDB and restarts the web container to apply the new URL.
+
+Useful commands:
+
+```bash
+# Show the current generated URL
+sudo grep '^BASE_URL=' .env
+
+# Follow tunnel logs / troubleshoot URL generation
+sudo journalctl -u file2link-cloudflared -f
+
+# Restart the tunnel (a new temporary URL may be generated)
+sudo systemctl restart file2link-cloudflared
+
+# Check service status
+sudo systemctl status file2link-cloudflared --no-pager
+```
+
+Quick Tunnels are temporary and intended for testing: their URL can change after a restart, and Cloudflare does not provide an uptime guarantee for them. The File2link service automatically synchronizes the new URL, but links already shared with users using an old URL will not be rewritten. For production, use a named Cloudflare Tunnel with a hostname on your own domain.
+
+## Maintenance
+
+```bash
+docker compose logs -f web
+docker compose restart web
+docker compose pull mongodb redis
 docker compose up -d --build
 ```
 
-Check the backend:
+MongoDB data is stored in the `mongodb_data` Docker volume. Back it up before upgrades or migrations.
+
+## Testing and verification
+
+Run locally in an environment with dependencies installed:
 
 ```bash
-curl http://127.0.0.1:8000/health
-```
-
-Put the backend behind HTTPS using a reverse proxy or Cloudflare Tunnel. Set the resulting public backend URL as `BACKEND_URL` in Vercel. Ensure the reverse proxy permits streaming responses and HTTP Range requests.
-
-Alternatively, install Python dependencies and run `uvicorn app.main:app --host 0.0.0.0 --port 8000`. This is suitable for development; use a process supervisor for production.
-
-## 3. Deploy the website gateway to Vercel (repository root)
-
-1. Import this repository at [Vercel](https://vercel.com/new).
-2. Set **Root Directory** to the repository root (do not select `vercel/`).
-3. Add the environment variable `BACKEND_URL`, e.g. `https://api.your-domain.com`.
-4. Deploy. No custom build command is required; the root `vercel.json` routes requests through the Node.js proxy in `api/[...path].js`.
-5. Set the bot's public URL to the Vercel domain using `BASE_URL` or `/baseurl https://your-project.vercel.app`.
-
-The Vercel gateway redirects `/stream`, `/dl`, and `/remux` traffic to the backend so media bytes do not pass through a serverless function. Other requests (home page, watch page, static files, catalog and admin API) are proxied to the backend.
-
-If `BACKEND_URL` is missing or unreachable, the Vercel deployment will return a clear configuration/502 error. This is expected until the backend is deployed and reachable.
-
-## 4. Admin dashboard and commands
-
-Open `https://your-project.vercel.app/panel` and authenticate with username `admin` and the `ADMIN_PANEL_TOKEN` password.
-
-- Toggle downloads and streaming independently.
-- Toggle the built-in watch-page player.
-- Toggle best-effort Android VLC auto handoff.
-- Select the configured access mode.
-- Create/delete custom categories.
-- Search TMDB and publish movie/series pages. Movie pages are assigned to Movies; TV pages to Web Series.
-
-Telegram admin commands:
-
-- `/search title` — search TMDB and select a result to publish.
-- `/categories` — open category management guidance.
-- `/edit` — open page editor guidance.
-- `/panel` — dashboard link.
-- `/baseurl https://domain` — update generated public links.
-
-Only Telegram IDs in `ADMINS` or the `OWNER_ID` can use these CMS commands. The web dashboard uses its separate Basic-auth secret.
-
-## 5. Catalog API
-
-- `GET /api/catalog` — published catalog.
-- `GET /api/catalog?q=salaar` — title search.
-- `GET /api/catalog?category=movies` — category filter.
-- `GET /title/{slug}` — dedicated title page.
-- `GET /api/site-settings` — public playback settings.
-- `GET /api/admin/categories` — protected category list.
-- `POST /api/admin/categories` — protected category creation.
-- `DELETE /api/admin/categories/{slug}` — protected category deletion.
-- `GET /api/admin/tmdb-search?q=title` — protected TMDB search.
-- `POST /api/admin/pages` and `PUT /api/admin/pages/{slug}` — protected page publishing/editing.
-- `PUT /api/admin/settings` — protected runtime settings.
-
-All CMS writes are stored in MongoDB and survive process restarts. The page data model includes `groups: [{name, buttons: [{name, url}]}]`; keep button URLs absolute HTTP(S) URLs or relative same-site paths. Internal absolute links are rendered against the current forwarded website domain, so changing the Vercel domain does not require rewriting every internal button. Do not enter JavaScript URLs.
-
-## 6. Player behavior and limitations
-
-The built-in player can be hidden while external-player options remain on the Watch Online page. Auto handoff is best-effort: browsers do not expose a reliable API for enumerating installed external players. The current implementation attempts Android's VLC intent and uses the normal page as browser fallback. On iOS and desktop it leaves the normal page in place rather than claiming to detect an installed app it cannot verify.
-
-## 7. Development and tests
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
+python -m compileall -q app workers gen_session.py
 pytest -q
 ```
 
-For a local backend, set the environment variables above before starting the app. `/health` is the health-check endpoint.
+For a production acceptance test, additionally verify bot authentication, uploading a test file, generated link opening, HTTP range seeking, full download, Android player launches, audio-track remuxing, `/baseurl` persistence after restart, and concurrent playback from separate devices. A successful image build or `/health` response alone does not prove every Telegram or client-device feature works.
 
-## Security notes
+## Public Base URL and Telegram file buttons
 
-- Keep bot tokens, API hashes, database URIs, TMDB keys and admin secrets in environment variables.
-- Use HTTPS for both Vercel and the backend.
-- Restrict backend ingress to trusted infrastructure where possible.
-- Use a strong `ADMIN_PANEL_TOKEN`; rotate it if it has ever been shared.
-- Configure `ADMINS` and `OWNER_ID` with numeric Telegram IDs.
-- TMDB metadata is provided by TMDB; attribution and applicable TMDB terms should be followed.
+Set `BASE_URL` to a publicly reachable URL before users upload files. For Cloudflare Quick Tunnel, run `cloudflared tunnel --url http://127.0.0.1:8000`, then send the generated URL to the bot with `/baseurl https://YOUR-NAME.trycloudflare.com`. The bot validates the URL and uses it for the Direct Download (`/dl/`) and Watch Online (`/watch/`) buttons attached to the uploaded file message. `localhost` and private IP addresses are intentionally rejected because Telegram users cannot reach them.
+
+The update-channel buttons point to `https://t.me/HiTLERYT`. `CHANNEL_ID` remains a numeric Telegram chat ID for private logging/file mirroring; it must not be replaced with a public URL.
+
+
+## `/mi` downloadable URL support
+
+Use `/mi` as a reply to a Telegram media message, or pass a direct downloadable URL:
+
+```text
+/mi https://example.com/path/video.mkv
+```
+
+The URL must be a publicly reachable HTTP/HTTPS resource. The command probes the
+remote file directly where the origin supports it; it does not intentionally save
+a complete copy before probing. Some hosts block probing, redirects, or byte-range
+requests, so compatibility depends on the origin server.
+
+## Download throughput tuning
+
+The default streaming response chunk is set to 4 MiB, with up to 12 parallel
+Telegram range parts when the file size and available sessions justify it.
+Configure multiple valid `SESSIONS` to increase concurrent Telegram connections.
+A 2 Gbps (2000 Mbps) throughput is a target, not a guarantee: the VPS NIC,
+provider limits, Telegram/source throughput, session count, CPU, and client
+network all affect real speed. Do not set concurrency higher than your VPS can
+handle; monitor memory and outbound bandwidth.

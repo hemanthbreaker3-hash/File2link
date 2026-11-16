@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}HITLER YT · Movies & Series{% endblock %}
-{% block head %}<style>
-.hero{min-height:390px;border-radius:24px;padding:clamp(28px,6vw,64px);display:flex;align-items:end;background:linear-gradient(90deg,#06132beF,#07162db0 55%,#06132b35),linear-gradient(0deg,#06132b,#06132b00),url('/static/images/poster.jpg') center/cover;border:1px solid #234b80;box-shadow:0 22px 70px #0008}.hero h1{font-size:clamp(34px,7vw,62px);line-height:1;margin:12px 0}.eyebrow{color:#73b4ff;letter-spacing:3px;font-weight:800}.search{display:flex;gap:8px;margin:22px 0}.search input{flex:1;min-width:0;background:#0b1d37;border:1px solid #234b80;border-radius:12px;padding:14px;color:white}.section-head{display:flex;justify-content:space-between;align-items:center;margin:30px 0 14px}.poster-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:16px}.poster{overflow:hidden;border:1px solid #1c3d67;border-radius:14px;background:#0a1930;transition:.2s}.poster:hover{transform:translateY(-5px);border-color:#60a5fa;box-shadow:0 12px 30px #1d4ed844}.poster img{width:100%;aspect-ratio:2/3;object-fit:cover;display:block;background:#10294a}.poster div{padding:10px;font-weight:700}.chip{border:1px solid #28558b;border-radius:30px;padding:8px 14px;color:#9ccaff;background:#0a1b33}
-</style>{% endblock %}
+{% block title %}HITLER{% endblock %}
 {% block content %}
-<section class="hero"><div><div class="eyebrow">HITLER YT ORIGINALS</div><h1>Stories worth<br>staying in for.</h1><p class="muted">Movies, web series and your next favourite watch — all in one place.</p><a class="btn accent" href="#catalog">Explore titles</a></div></section>
-<form class="search" action="/" method="get"><input name="q" value="{{ request.query_params.get('q','') }}" placeholder="Search movies and web series…"><button class="btn accent">Search</button></form>
-<div class="section-head" id="catalog"><h2>Explore collection</h2><span class="chip">Blue • Premium • HD</span></div>
-<div id="category-nav" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div><div class="poster-grid" id="catalog-grid"><p class="muted">Loading titles…</p></div>
-<script>
-(async()=>{const q=new URLSearchParams(location.search).get('q')||'';let category='';try{const cats=await (await fetch('/api/categories')).json();const nav=document.getElementById('category-nav');const all=document.createElement('button');all.className='chip';all.textContent='All';all.onclick=()=>{category='';load()};nav.append(all);for(const c of cats.items){const b=document.createElement('button');b.className='chip';b.textContent=c.name;b.onclick=()=>{category=c.slug;load()};nav.append(b)}}catch(e){}async function load(){try{const params=new URLSearchParams();if(q)params.set('q',q);if(category)params.set('category',category);const r=await fetch('/api/catalog?'+params.toString());const d=await r.json();const el=document.getElementById('catalog-grid');el.innerHTML='';if(!d.items.length){el.innerHTML='<p class="muted">No titles published yet. Admins can add titles from the admin tools.</p>';return}for(const p of d.items){const a=document.createElement('a');a.className='poster';a.href='/title/'+encodeURIComponent(p.slug);const img=document.createElement('img');img.loading='lazy';img.src=p.poster_path?.startsWith('http')?p.poster_path:'https://image.tmdb.org/t/p/w500'+(p.poster_path||'');img.alt=p.title;const t=document.createElement('div');t.textContent=p.title;a.append(img,t);el.append(a)}}catch(e){document.getElementById('catalog-grid').textContent='Unable to load titles right now.'}}await load()})();
-</script>
+<section style="padding:44px 0 28px;text-align:center">
+  <div class="muted" style="font-size:12px;letter-spacing:1.5px">HITLER</div>
+  <h1 style="font-size:clamp(30px,7vw,54px);line-height:1.05;margin:10px 0">Fast, simple media streaming.</h1>
+  <p class="muted" style="max-width:620px;margin:0 auto">Watch Telegram media directly in your browser or open it in a player installed on your device.</p>
+</section>
+<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px">
+  <article class="card" style="padding:20px"><b>Direct playback</b><p class="muted">Range requests and browser-friendly streaming for quick seeking.</p></article>
+  <article class="card" style="padding:20px"><b>Multiple audio tracks</b><p class="muted">Detect available tracks and switch when browser-compatible remuxing is possible.</p></article>
+  <article class="card" style="padding:20px"><b>External players</b><p class="muted">Separate player shortcuts for mobile, desktop, tablet and TV devices.</p></article>
+</section>
+<p class="muted" style="text-align:center;margin-top:22px"><a href="https://t.me/HiTLERYT" target="_blank" rel="noopener">https://t.me/HiTLERYT</a></p>
 {% endblock %}
