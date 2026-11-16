@@ -2,20 +2,14 @@ FILE2LINK — SINGLE VPS DEPLOYMENT
 
 1) Copy/paste the contents of deploy-one-command.sh into your VPS terminal,
    OR run it from the cloned project directory after obtaining the ZIP.
-2) It asks for your GitHub repository URL, API_HASH, BOT_TOKEN and MONGODB_URI.
-   Secret inputs are hidden while typing.
-3) It clones to ~/file2link, exports the File2link IDs/settings, and runs deploy.vps.
+2) It asks for API_ID, API_HASH, OWNER_ID, optional admin/channel IDs,
+   optional TMDB_API_KEY, BOT_TOKEN and MONGODB_URI. Secret inputs are hidden.
+3) It clones to ~/file2link, generates a strong ADMIN_PANEL_TOKEN if needed,
+   writes a private .env file, and runs deploy.vps.
 
-Known non-secret settings are prefilled from the supplied configuration:
-API_ID=22266643
-OWNER_ID=8663988850
-ADMINS=5778067019
-CHANNEL_ID=-1003553348627
-FORCE_SUB_CHANNELS=-1004306981801
-DATABASE_NAME=file2link
+The admin dashboard is available at /panel (username: admin). Retrieve its
+password from the private backend .env file using: grep '^ADMIN_PANEL_TOKEN=' .env
 
-Before deployment, rotate any Telegram token/API hash and MongoDB password that
-were posted in chat. Use the rotated values at the hidden prompts.
 
 No script can guarantee 100% success: GitHub access, VPS DNS/network, Atlas IP
 allowlist, credentials, Telegram bot permissions and public BASE_URL are external

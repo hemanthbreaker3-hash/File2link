@@ -8,6 +8,7 @@ from app.streamer.engine import get_streaming_response, get_remux_response
 from app.streamer.probe import probe_tracks
 from app.bot.main import register_handlers
 from app.admin.routes import router as admin_router
+from app.cms import router as cms_router, get_settings, seed_categories
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
         await mongo_client.admin.command("ping")
         await create_indexes()
         await load_custom_settings()
+        await seed_categories()
         session_manager.prepare_bot()
         register_handlers(session_manager.bot_client)
         await session_manager.start()
@@ -51,6 +53,7 @@ app = FastAPI(title="HITLER Media Link Service", lifespan=lifespan)
 
 # Include Routers
 app.include_router(admin_router)
+app.include_router(cms_router)
 
 # Enable CORS
 app.add_middleware(
@@ -90,12 +93,18 @@ async def watch_page(request: Request, short_code: str):
             "request": request,
             "file": file_data,
             "base_url": settings.BASE_URL.rstrip("/"),
+            "player_settings": await get_settings(),
         },
     )
 
 @app.get("/dl/{short_code}")
 @app.get("/stream/{short_code}")
 async def stream_file(request: Request, short_code: str):
+    runtime = await get_settings()
+    if request.url.path.startswith("/dl/") and not runtime["downloads_enabled"]:
+        raise HTTPException(status_code=403, detail="Downloads are currently disabled")
+    if request.url.path.startswith("/stream/") and not runtime["streaming_enabled"]:
+        raise HTTPException(status_code=403, detail="Streaming is currently disabled")
     file_data = await files_col.find_one({"short_code": short_code})
     if not file_data:
         raise HTTPException(status_code=404, detail="File not found")
@@ -177,6 +186,8 @@ async def get_tracks(short_code: str):
 @app.get("/remux/{short_code}")
 async def remux_file(request: Request, short_code: str, audio: int = 0, aac: int = 1):
     """Browser-friendly fragmented MP4; AAC by default for universal audio."""
+    if not (await get_settings())["streaming_enabled"]:
+        raise HTTPException(status_code=403, detail="Streaming is currently disabled")
     file_data = await files_col.find_one({"short_code": short_code})
     if not file_data or (file_data.get("expiry_time") and file_data["expiry_time"] < datetime.datetime.utcnow()):
         raise HTTPException(status_code=404, detail="File not found or expired")

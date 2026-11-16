@@ -125,6 +125,7 @@ def _parse_probe_data(probe_data: dict) -> dict:
                 "title": title,
             })
     return {
+        "probe_version": 2,
         "video_tracks": video_tracks,
         "audio_tracks": audio_tracks,
         "subtitle_tracks": subtitle_tracks,

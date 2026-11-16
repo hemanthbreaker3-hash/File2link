@@ -5,12 +5,15 @@ import html
 import logging
 import os
 import mimetypes
+import httpx
+import secrets
+import re
 
 from wzgram import filters
 from wzgram.enums import ParseMode
 from wzgram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 
-from app.database.connection import files_col, users_col, settings_col, settings
+from app.database.connection import files_col, users_col, settings_col, settings, db
 from app.models.schemas import FileMetadata, User
 from app.utils.helpers import generate_short_code, format_bytes, normalize_public_base_url
 from app.utils.fsub import is_user_fsubbed
@@ -44,6 +47,16 @@ def _kb(rows):
     return InlineKeyboardMarkup(rows)
 
 
+async def is_access_allowed(user_id: int) -> bool:
+    config = await db.site_settings.find_one({"_id": "runtime"}) or {}
+    mode = config.get("access_mode", "all")
+    if mode == "owners":
+        return user_id == settings.OWNER_ID
+    if mode == "admins":
+        return user_id == settings.OWNER_ID or user_id in settings.admin_list
+    return True
+
+
 def register_handlers(bot):
     """Register wzgram (Pyrogram-compatible) handlers on the bot client."""
 
@@ -53,6 +66,12 @@ def register_handlers(bot):
         if not user or user.is_bot:
             return
         user_id = user.id
+        access_cfg = await db.site_settings.find_one({"_id": "runtime"}) or {}
+        access_mode = access_cfg.get("access_mode", "all")
+        if access_mode == "owners" and user_id != settings.OWNER_ID:
+            return await message.reply("🔒 This bot is currently restricted to its owner.")
+        if access_mode == "admins" and user_id not in settings.admin_list and user_id != settings.OWNER_ID:
+            return await message.reply("🔒 This bot is currently restricted to administrators.")
 
         user_data = await users_col.find_one({"user_id": user_id})
         if user_data and user_data.get("is_banned"):
@@ -114,6 +133,17 @@ def register_handlers(bot):
         if not user or user.is_bot:
             return
 
+        access_cfg = await db.site_settings.find_one({"_id": "runtime"}) or {}
+        access_mode = access_cfg.get("access_mode", "all")
+        if access_mode == "owners" and user.id != settings.OWNER_ID:
+            return await message.reply("🔒 This bot is currently restricted to its owner.")
+        if access_mode == "admins" and user.id not in settings.admin_list and user.id != settings.OWNER_ID:
+            return await message.reply("🔒 This bot is currently restricted to administrators.")
+        runtime_cfg = await db.site_settings.find_one({"_id": "runtime"}) or {}
+        downloads_enabled = runtime_cfg.get("downloads_enabled", True)
+        streaming_enabled = runtime_cfg.get("streaming_enabled", True)
+        if not downloads_enabled and not streaming_enabled:
+            return await message.reply("🚫 **Service Disabled**\n\n> Downloads and streaming are currently disabled by the administrator.")
         user_data = await users_col.find_one({"user_id": user.id})
         if user_data and user_data.get("is_banned"):
             return await message.reply(
@@ -221,47 +251,37 @@ def register_handlers(bot):
         safe_mime = html.escape(mime_type)
 
         if links_ready:
-            download_url = f"{base_url}/dl/{short_code}"
-            stream_url = f"{base_url}/watch/{short_code}"
+            download_url = f"{base_url}/dl/{short_code}" if downloads_enabled else None
+            stream_url = f"{base_url}/watch/{short_code}" if streaming_enabled else None
+            active_links = []
+            button_rows = []
+            if downloads_enabled:
+                active_links.append(f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>")
+                button_rows.append(InlineKeyboardButton("⚡ Direct Download", url=download_url))
+            if streaming_enabled:
+                active_links.append(f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>")
+                button_rows.append(InlineKeyboardButton("🍿 Watch Online", url=stream_url))
             caption = (
                 "💎 <b>Media Links Generated</b>\n\n"
                 f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
                 f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
                 f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
-                "🚀 <b>Fast Links</b>\n"
-                f"⚡ <a href=\"{html.escape(download_url, quote=True)}\">Direct Download</a>\n"
-                f"🍿 <a href=\"{html.escape(stream_url, quote=True)}\">Watch Online</a>\n\n"
+                "🚀 <b>Available Links</b>\n" + "\n".join(active_links) + "\n\n"
                 f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
             )
-            user_buttons = _kb([
-                [
-                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
-                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
-                ],
-                [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
-                [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")],
-            ])
-            channel_buttons = _kb([
-                [
-                    InlineKeyboardButton("⚡ Direct Download", url=download_url),
-                    InlineKeyboardButton("🍿 Watch Online", url=stream_url),
-                ],
-                [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
-            ])
+            user_buttons = _kb([button_rows, [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)], [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")]])
+            channel_buttons = _kb([button_rows, [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)]])
         else:
             caption = (
                 "💎 <b>File Received Successfully</b>\n\n"
                 f"📂 <b>File Name:</b> <code>{safe_name}</code>\n"
                 f"📦 <b>File Size:</b> <code>{html.escape(formatted_size)}</code>\n"
                 f"⚙️ <b>MIME Type:</b> <code>{safe_mime}</code>\n\n"
-                "⚠️ <b>Download and streaming links are not active yet.</b>\n"
-                "The administrator must set a public HTTPS address using <code>/baseurl https://your-public-domain</code>.\n\n"
+                "⚠️ <b>Public links are not active yet.</b>\n"
+                "The administrator must configure the public Base URL.\n\n"
                 f"📢 <a href=\"{html.escape(settings.UPDATE_CHANNEL_URL, quote=True)}\">Updates Channel</a>"
             )
-            user_buttons = _kb([
-                [InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)],
-                [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")],
-            ])
+            user_buttons = _kb([[InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)], [InlineKeyboardButton("🗑️ Delete Link", callback_data=f"del_{short_code}")]])
             channel_buttons = _kb([[InlineKeyboardButton("📢 Updates Channel", url=settings.UPDATE_CHANNEL_URL)]])
 
         try:
@@ -309,6 +329,114 @@ def register_handlers(bot):
             await callback.message.edit_text("🗑️ **Link deleted successfully!**")
         else:
             await callback.answer("🚫 You are not authorized to delete this link.", show_alert=True)
+
+    # Admin-only website CMS commands. The secure web dashboard performs the full edits.
+    @bot.on_message(filters.command("search"))
+    async def cms_search_handler(client, message: Message):
+        user = message.from_user
+        if not user or (user.id not in settings.admin_list and user.id != settings.OWNER_ID):
+            return await message.reply("🚫 Admins only.")
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) < 2:
+            return await message.reply("Usage: /search movie or series name")
+        api_key = settings.TMDB_API_KEY
+        if not api_key:
+            return await message.reply("TMDB_API_KEY is missing in the backend environment.")
+        try:
+            async with httpx.AsyncClient(timeout=15) as http:
+                response = await http.get("https://api.themoviedb.org/3/search/multi", params={"api_key": api_key, "query": args[1], "include_adult": "false"})
+                response.raise_for_status()
+                results = response.json().get("results", [])[:20]
+            rows = []
+            for item in results:
+                media_type = item.get("media_type")
+                if media_type not in ("movie", "tv"):
+                    continue
+                title = item.get("title") or item.get("name") or "Untitled"
+                pending_id = secrets.token_hex(5)
+                await db.cms_pending.insert_one({"_id": pending_id, "tmdb_id": item["id"], "media_type": media_type, "title": title, "overview": item.get("overview", ""), "poster_path": item.get("poster_path") or "", "release_date": item.get("release_date") or item.get("first_air_date", ""), "rating": item.get("vote_average")})
+                rows.append([InlineKeyboardButton(f"{title[:45]} · {media_type}", callback_data=f"cmscreate:{pending_id}")])
+            if not rows:
+                return await message.reply("No matching movie or series found.")
+            return await message.reply("Select a TMDB result to publish its page:", reply_markup=_kb(rows))
+        except Exception as exc:
+            logger.exception("TMDB search failed")
+            return await message.reply(f"TMDB search failed: {type(exc).__name__}")
+
+    @bot.on_callback_query(filters.regex(r"^cmscreate:"))
+    async def cms_create_callback(client, callback: CallbackQuery):
+        user = callback.from_user
+        if not user or (user.id not in settings.admin_list and user.id != settings.OWNER_ID):
+            return await callback.answer("Admins only", show_alert=True)
+        pending_id = callback.data.split(":", 1)[1]
+        pending = await db.cms_pending.find_one({"_id": pending_id})
+        if not pending:
+            return await callback.answer("Search result expired", show_alert=True)
+        from app.database.connection import settings as app_settings
+        slug = re.sub(r"[^a-z0-9]+", "-", pending["title"].lower()).strip("-") or secrets.token_hex(5)
+        base, n = slug, 2
+        while await db.catalog_pages.find_one({"slug": slug}):
+            slug = f"{base}-{n}"; n += 1
+        category = "web-series" if pending["media_type"] == "tv" else "movies"
+        extra = {"genres": [], "imdb_id": "", "runtime": None, "tagline": ""}
+        if settings.TMDB_API_KEY:
+            try:
+                endpoint = "tv" if pending["media_type"] == "tv" else "movie"
+                async with httpx.AsyncClient(timeout=15) as http:
+                    detail = await http.get(f"https://api.themoviedb.org/3/{endpoint}/{pending['tmdb_id']}", params={"api_key": settings.TMDB_API_KEY, "append_to_response": "external_ids"})
+                    detail.raise_for_status(); metadata = detail.json()
+                extra = {"genres": [g.get("name", "") for g in metadata.get("genres", [])], "imdb_id": (metadata.get("external_ids") or {}).get("imdb_id") or metadata.get("imdb_id", ""), "runtime": metadata.get("runtime") or (metadata.get("episode_run_time") or [None])[0], "tagline": metadata.get("tagline", "")}
+            except Exception:
+                logger.exception("TMDB details lookup failed; publishing search metadata only")
+        await db.catalog_pages.insert_one({"slug": slug, "title": pending["title"], "overview": pending.get("overview", ""), "poster_path": pending.get("poster_path", ""), "release_date": pending.get("release_date", ""), "rating": pending.get("rating"), "media_type": pending["media_type"], "category_slugs": [category], "groups": [], "published": True, "created_at": datetime.datetime.utcnow(), **extra})
+        await db.cms_pending.delete_one({"_id": pending_id})
+        await callback.message.edit_text(f"✅ Page created: {app_settings.BASE_URL.rstrip('/')}/title/{slug}\nUse /edit while replying with this link, or open /panel to manage page groups and buttons.")
+        await callback.answer("Published")
+
+    @bot.on_callback_query(filters.regex(r"^cmscat:"))
+    async def cms_category_callback(client, callback: CallbackQuery):
+        user = callback.from_user
+        if not user or (user.id not in settings.admin_list and user.id != settings.OWNER_ID):
+            return await callback.answer("Admins only", show_alert=True)
+        pending_id = callback.data.split(":", 1)[1]
+        pending = await db.cms_pending.find_one({"_id": pending_id, "action": "category"})
+        if not pending:
+            return await callback.answer("Selection expired", show_alert=True)
+        await db.catalog_pages.update_one({"slug": pending["page_slug"]}, {"$addToSet": {"category_slugs": pending["category_slug"]}})
+        await db.cms_pending.delete_one({"_id": pending_id})
+        await callback.message.edit_text("✅ Page category updated. The website catalog is updated automatically.")
+        await callback.answer("Category assigned")
+
+    @bot.on_message(filters.command(["categories", "edit", "panel"]))
+    async def cms_admin_commands(client, message: Message):
+        user = message.from_user
+        if not user or (user.id not in settings.admin_list and user.id != settings.OWNER_ID):
+            return await message.reply("🚫 Admins only.")
+        base = settings.BASE_URL.rstrip("/")
+        cmd = (message.text or "").split()[0].split("@")[0]
+        if cmd == "/categories":
+            reply = getattr(message, "reply_to_message", None)
+            if reply:
+                source_text = (getattr(reply, "text", None) or getattr(reply, "caption", None) or "")
+                match = re.search(r"/title/([a-z0-9-]+)", source_text, re.I)
+                if not match:
+                    return await message.reply("Reply to a published /title/ page link to assign its category.")
+                page_slug = match.group(1)
+                if not await db.catalog_pages.find_one({"slug": page_slug}):
+                    return await message.reply("That catalog page was not found.")
+                available = await db.catalog_categories.find({}).to_list(None)
+                rows = []
+                for cat in available:
+                    pending_id = secrets.token_hex(5)
+                    await db.cms_pending.insert_one({"_id": pending_id, "action": "category", "page_slug": page_slug, "category_slug": cat["slug"]})
+                    rows.append([InlineKeyboardButton(cat["name"], callback_data=f"cmscat:{pending_id}")])
+                return await message.reply("Choose a category for this page:", reply_markup=_kb(rows))
+            cats = await db.catalog_categories.find({}, {"_id": 0}).to_list(None)
+            names = "\n".join(f"• {c['name']}" for c in cats) or "No categories created yet."
+            return await message.reply(f"🗂️ **Categories**\n\n{names}\n\nCreate or manage unlimited categories in the dashboard.", reply_markup=_kb([[InlineKeyboardButton("➕ Create / Manage Categories", url=f"{base}/panel")]]))
+        if cmd == "/edit":
+            return await message.reply("✏️ Page editor\n\nEdit page metadata, poster, categories, unlimited groups and buttons in the dashboard.", reply_markup=_kb([[InlineKeyboardButton("✏️ Open Page Editor", url=f"{base}/panel")]]))
+        return await message.reply("🔐 Admin dashboard", reply_markup=_kb([[InlineKeyboardButton("Open HITLER YT Panel", url=f"{base}/panel")]]))
 
     @bot.on_message(filters.command("baseurl"))
     async def baseurl_handler(client, message: Message):
@@ -476,6 +604,8 @@ def register_handlers(bot):
         user = message.from_user
         if not user or user.is_bot:
             return
+        if not await is_access_allowed(user.id):
+            return await message.reply("🔒 This bot is restricted by the administrator.")
         if not await is_user_fsubbed(client, user.id):
             return await message.reply(
                 "🔒 **Access Restricted**\n\n> Join the updates channel first.",
@@ -514,6 +644,8 @@ def register_handlers(bot):
         user = message.from_user
         if not user or user.is_bot:
             return
+        if not await is_access_allowed(user.id):
+            return await message.reply("🔒 This bot is restricted by the administrator.")
         if not await is_user_fsubbed(client, user.id):
             return await message.reply(
                 "🔒 **Access Restricted**\n\n> Join the updates channel first.",
@@ -551,6 +683,8 @@ def register_handlers(bot):
         user = callback.from_user
         if not user or user.is_bot:
             return
+        if not await is_access_allowed(user.id):
+            return await callback.answer("Restricted by administrator", show_alert=True)
         try:
             _, chat_s, msg_s, count_s = callback.data.split(":", 3)
             chat_id, msg_id, count = int(chat_s), int(msg_s), int(count_s)
@@ -605,6 +739,8 @@ def register_handlers(bot):
         user = callback.from_user
         if not user or user.is_bot:
             return
+        if not await is_access_allowed(user.id):
+            return await callback.answer("Restricted by administrator", show_alert=True)
         try:
             _, chat_s, msg_s, sec_s = callback.data.split(":", 3)
             chat_id, msg_id, seconds = int(chat_s), int(msg_s), int(sec_s)
@@ -656,6 +792,8 @@ def register_handlers(bot):
         user = message.from_user
         if not user or user.is_bot:
             return
+        if not await is_access_allowed(user.id):
+            return await message.reply("🔒 This bot is restricted by the administrator.")
         if not await is_user_fsubbed(client, user.id):
             return await message.reply(
                 "🔒 **Access Restricted**\n\n> Join the updates channel first.",
